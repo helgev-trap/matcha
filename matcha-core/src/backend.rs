@@ -1,5 +1,7 @@
 use std::{future::Future, pin::Pin};
 
+use log::error;
+
 use async_trait::async_trait;
 
 #[async_trait]
@@ -22,7 +24,7 @@ impl<Event: Send + 'static> Backend<Event> for () {
 impl<Event: Send> Backend<Event> for std::sync::mpsc::Sender<Event> {
     async fn send_event(&self, event: Event) {
         if let Err(e) = self.send(event) {
-            eprintln!("Failed to send event to backend: {e}");
+            error!("Backend (std::sync::mpsc): failed to send event: {e}");
         }
     }
 }
@@ -33,7 +35,7 @@ impl<Event: Send> Backend<Event> for std::sync::mpsc::Sender<Event> {
 impl<Event: Send> Backend<Event> for tokio::sync::mpsc::Sender<Event> {
     async fn send_event(&self, event: Event) {
         if let Err(e) = self.send(event).await {
-            eprintln!("Failed to send event to backend: {e}");
+            error!("Backend (tokio::sync::mpsc): failed to send event: {e}");
         }
     }
 }

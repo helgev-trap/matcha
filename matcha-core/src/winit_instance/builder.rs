@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use log::{debug, trace};
+
 use crate::{debug_config::DebugConfig, ui::component::AnyComponent};
 use winit::dpi::PhysicalSize;
 
@@ -60,11 +62,18 @@ pub(crate) enum RuntimeBuilder {
 impl RuntimeBuilder {
     pub fn build(self) -> Result<tokio::runtime::Runtime, std::io::Error> {
         match self {
-            Self::GivenRuntime(runtime) => Ok(runtime),
+            Self::GivenRuntime(runtime) => {
+                trace!("RuntimeBuilder::build: using provided runtime");
+                Ok(runtime)
+            }
             Self::CreateInternally { threads } => {
                 let cpu_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
                 let threads = threads.min(cpu_threads);
 
+                trace!(
+                    "RuntimeBuilder::build: creating runtime with threads={} (cpu={})",
+                    threads, cpu_threads
+                );
                 if threads == 1 {
                     tokio::runtime::Builder::new_current_thread()
                         .enable_all()
@@ -83,6 +92,9 @@ impl RuntimeBuilder {
 impl<Message, Event: Send + 'static, B: Backend<Event>> WinitInstanceBuilder<Message, Event, B> {
     pub fn new(component: impl AnyComponent<Message, Event> + 'static, backend: B) -> Self {
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+        trace!(
+            "WinitInstanceBuilder::new: initializing with default configuration (threads={threads})"
+        );
         Self {
             component: Box::new(component),
             backend,
@@ -216,26 +228,31 @@ impl<Message, Event: Send + 'static, B: Backend<Event>> WinitInstanceBuilder<Mes
     // --- Build ---
 
     pub fn build(self) -> Result<WinitInstance<Message, Event, B>, InitError> {
+        debug!("WinitInstanceBuilder::build: starting build pipeline");
         // 1) Build Tokio runtime
         let tokio_runtime = self
             .runtime_builder
             .build()
             .map_err(|_| InitError::TokioRuntime)?;
+        trace!("WinitInstanceBuilder::build: tokio runtime initialized");
 
         // 2) Initialize GPU
         let gpu = tokio_runtime
             .block_on(gpu_utils::gpu::Gpu::new(gpu_utils::gpu::GpuDescriptor {
                 backends: wgpu::Backends::PRIMARY,
                 power_preference: self.power_preference,
-                required_features: wgpu::Features::VERTEX_WRITABLE_STORAGE | wgpu::Features::PUSH_CONSTANTS,
+                required_features: wgpu::Features::VERTEX_WRITABLE_STORAGE
+                    | wgpu::Features::PUSH_CONSTANTS,
                 required_limits: None,
                 preferred_surface_format: self.surface_preferred_format,
                 auto_recover_enabled: false,
             }))
             .map_err(|_| InitError::Gpu)?;
+        debug!("WinitInstanceBuilder::build: GPU initialized successfully");
 
         // 3) Global resources
         let resource = crate::context::GlobalResources::new(gpu);
+        trace!("WinitInstanceBuilder::build: global resources created");
 
         // 4) Create Window UI and apply builder settings
         let mut window_ui = super::window_ui::WindowUi::new(
@@ -252,11 +269,17 @@ impl<Message, Event: Send + 'static, B: Backend<Event>> WinitInstanceBuilder<Mes
         window_ui.init_size(self.init_size.width, self.init_size.height);
         window_ui.set_maximized(self.maximized);
         window_ui.set_fullscreen(self.full_screen);
+        trace!(
+            "WinitInstanceBuilder::build: configured window title='{}' size={}x{}",
+            self.title, self.init_size.width, self.init_size.height
+        );
 
         // 5) Renderer
         let renderer = renderer::CoreRenderer::new(&resource.gpu().device());
+        trace!("WinitInstanceBuilder::build: renderer initialized");
 
         // 6) Build instance (single-window Vec 管理)
+        debug!("WinitInstanceBuilder::build: finalizing instance");
         Ok(WinitInstance {
             tokio_runtime,
             resource,

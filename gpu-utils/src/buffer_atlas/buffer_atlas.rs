@@ -25,6 +25,7 @@
 //! 4. At the beginning of your rendering cycle, call `BufferAtlas::flash()` to apply all
 //!    changes to the GPU.
 
+use log::{debug, trace};
 use std::{
     collections::VecDeque,
     sync::{Arc, Weak},
@@ -146,12 +147,14 @@ impl<const N: usize> Default for BufferAtlas<N> {
 impl<const N: usize> BufferAtlas<N> {
     /// Creates a new `BufferAtlas`.
     pub fn new() -> Self {
-        Self {
+        let atlas = Self {
             id: BufferAtlasId::new(),
             atlas: None,
             allocations: Vec::new(),
             to_be_allocated: Vec::new(),
-        }
+        };
+        trace!("BufferAtlas::new: created atlas_id={:?}", atlas.id);
+        atlas
     }
 
     /// Allocates a new buffer within the atlas.
@@ -161,6 +164,11 @@ impl<const N: usize> BufferAtlas<N> {
     pub fn allocate(&mut self) -> Buffer<N> {
         let buffer = BufferData::new(self.id);
         self.to_be_allocated.push(Arc::downgrade(&buffer));
+        trace!(
+            "BufferAtlas::allocate: scheduled buffer for atlas_id={:?}; pending={}",
+            self.id,
+            self.to_be_allocated.len()
+        );
         Buffer { data: buffer }
     }
 
@@ -174,6 +182,12 @@ impl<const N: usize> BufferAtlas<N> {
     ///
     /// Typically, this method should be called once per frame, before rendering.
     pub fn flash(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        trace!(
+            "BufferAtlas::flash: atlas_id={:?} allocations={} pending={}",
+            self.id,
+            self.allocations.len(),
+            self.to_be_allocated.len()
+        );
         // 1. Garbage Collection: Collect slots from dropped `Buffer`s in `allocations`.
         let mut empty_slots: VecDeque<usize> = self
             .allocations
@@ -188,8 +202,17 @@ impl<const N: usize> BufferAtlas<N> {
             })
             .collect();
 
+        trace!(
+            "BufferAtlas::flash: garbage collected {} empty slots",
+            empty_slots.len()
+        );
+
         // Remove any pending allocations for buffers that were dropped before `flash()` was called.
         self.to_be_allocated.retain(|weak| weak.upgrade().is_some());
+        trace!(
+            "BufferAtlas::flash: {} pending allocations after cleanup",
+            self.to_be_allocated.len()
+        );
 
         // 2. Resize Check: If more slots are needed than are available, resize the atlas.
         let empty_slots_count = empty_slots.len();
@@ -201,6 +224,10 @@ impl<const N: usize> BufferAtlas<N> {
             let needed_capacity = current_capacity + additional_slots;
             // For performance, round up the capacity to the next power of two.
             let new_capacity = needed_capacity.next_power_of_two();
+            debug!(
+                "BufferAtlas::flash: resizing atlas_id={:?} from {} to {} slots",
+                self.id, current_capacity, new_capacity
+            );
             Self::resize(
                 device,
                 queue,
@@ -249,6 +276,11 @@ impl<const N: usize> BufferAtlas<N> {
             } else if !chunk_data.is_empty() {
                 // End of a chunk. Write the collected data to the GPU.
                 if let Some(atlas_buffer) = &self.atlas {
+                    trace!(
+                        "BufferAtlas::flash: writing chunk start={} bytes={}",
+                        chunk_start,
+                        chunk_data.len()
+                    );
                     queue.write_buffer(
                         atlas_buffer,
                         (chunk_start * N) as wgpu::BufferAddress,
@@ -294,6 +326,10 @@ impl<const N: usize> BufferAtlas<N> {
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("buffer-atlas resize encoder"),
             });
+            trace!(
+                "BufferAtlas::resize: copying old buffer (size={} bytes) into new size={} bytes",
+                old_buffer_size, new_buffer_size
+            );
             encoder.copy_buffer_to_buffer(&old_buffer, 0, &new_buffer, 0, old_buffer_size);
             queue.submit(std::iter::once(encoder.finish()));
         }
@@ -302,5 +338,10 @@ impl<const N: usize> BufferAtlas<N> {
         // Expand the `allocations` vector and `empty_slots` queue to the new size.
         allocations.resize_with(new_size, Weak::new);
         empty_slots.extend(old_size..new_size);
+        trace!(
+            "BufferAtlas::resize: atlas expanded to {} slots ({} new empty slots)",
+            new_size,
+            new_size - old_size
+        );
     }
 }

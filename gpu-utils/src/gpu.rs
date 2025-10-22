@@ -1,4 +1,5 @@
 use fxhash::FxBuildHasher;
+use log::{debug, error, trace, warn};
 use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -108,11 +109,15 @@ impl Gpu {
             auto_recover_enabled,
         } = desc;
 
+        trace!(
+            "Gpu::new: creating instance with backends={backends:?}, power_preference={power_preference:?}, auto_recover_enabled={auto_recover_enabled}"
+        );
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends,
             ..Default::default()
         });
 
+        trace!("Gpu::new: requesting adapter");
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference,
@@ -121,16 +126,23 @@ impl Gpu {
             })
             .await
             .ok_or(GpuError::AdapterRequestFailed)?;
+        debug!("Gpu::new: adapter received: {:#?}", adapter.get_info());
 
         // Validate features requested by user are supported by the adapter.
         let adapter_features = adapter.features();
         if !adapter_features.contains(required_features) {
+            warn!(
+                "Gpu::new: adapter does not support required features: required={required_features:?} available={adapter_features:?}"
+            );
             return Err(GpuError::AdapterRequestFailed);
         }
 
         // Determine limits (use adapter limits if not provided)
         let limits = required_limits.unwrap_or_else(|| adapter.limits());
         let features = required_features;
+        trace!(
+            "Gpu::new: requesting device with features={features:?}, limits={limits:?}, preferred_surface_format={preferred_surface_format:?}"
+        );
 
         // Request device
         let (device, queue) = adapter
@@ -174,6 +186,7 @@ impl Gpu {
             }
         });
 
+        trace!("Gpu::new: device and queue successfully created");
         Ok(arc_self)
     }
 
@@ -331,6 +344,7 @@ impl Gpu {
     fn install_device_callbacks(device: &wgpu::Device, weak: &Weak<Gpu>) {
         let weak_clone = weak.clone();
         device.set_device_lost_callback(move |reason, s| {
+            debug!("Gpu::device lost callback triggered: reason={reason:?} message={s}");
             if let Some(gpu) = weak_clone.upgrade() {
                 gpu.handle_device_lost(reason, s);
             }
@@ -342,8 +356,7 @@ impl Gpu {
     /// This uses a boxed handler as required by wgpu.
     fn install_uncaptured_error_handler(device: &wgpu::Device) {
         device.on_uncaptured_error(Box::new(|err| {
-            // TODO: integrate with project logger instead of using eprintln!.
-            eprintln!("[gpu-utils] wgpu uncaptured error: {err:?}");
+            error!("gpu-utils: uncaptured wgpu error: {err:?}");
         }));
     }
 
@@ -363,6 +376,7 @@ impl Gpu {
             self.device_lost.store(true, Ordering::Release);
             *self.device_lost_details.write() = Some((reason, s.clone()));
         }
+        warn!("Gpu::handle_device_lost: device lost with reason={reason:?}, message={s}");
 
         // Call user callback if provided
         for cb in self.device_lost_callback.lock().values() {
@@ -376,6 +390,7 @@ impl Gpu {
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
         {
+            debug!("Gpu::handle_device_lost: starting recovery workflow");
             // Attempt recovery on a dedicated thread.
             let arc_self = self
                 .weak_self
@@ -395,6 +410,7 @@ impl Gpu {
 
                 match result {
                     Ok((new_device, new_queue)) => {
+                        trace!("Gpu::handle_device_lost: recovery device acquired");
                         // Swap new device and queue under write lock.
                         {
                             let mut dq = arc_self.device_queue.write();
@@ -412,6 +428,7 @@ impl Gpu {
 
                         // Mark recovery finished.
                         arc_self.is_recovering.store(false, Ordering::Release);
+                        debug!("Gpu::handle_device_lost: recovery completed successfully");
 
                         // Invoke recovery callback if provided.
                         for cb in arc_self.device_recover_callback.lock().values() {
@@ -419,6 +436,7 @@ impl Gpu {
                         }
                     }
                     Err(e) => {
+                        error!("Gpu::handle_device_lost: recovery failed: {e:?}");
                         // Mark recovery finished.
                         arc_self.is_recovering.store(false, Ordering::Release);
 
@@ -428,6 +446,8 @@ impl Gpu {
                     }
                 }
             });
+        } else {
+            trace!("Gpu::handle_device_lost: auto recovery disabled or already in progress");
         }
     }
 }

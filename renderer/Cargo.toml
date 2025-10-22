@@ -5,6 +5,7 @@ version.workspace = true
 
 [dependencies]
 wgpu.workspace = true
+log.workspace = true
 nalgebra.workspace = true
 bytemuck.workspace = true
 thiserror.workspace = true

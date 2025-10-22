@@ -1,4 +1,5 @@
 use crate::ui::component::AnyComponent;
+use log::{debug, trace};
 
 use super::{
     backend::Backend,
@@ -38,6 +39,7 @@ where
     /// Convenience constructor for apps that don't use a typed `Model` / `InnerEvent`
     /// and use the unit backend `()`.
     pub fn new(component: impl AnyComponent<Message, Event> + 'static) -> Self {
+        trace!("App::new: creating default app instance");
         Self {
             builder: WinitInstance::builder(component, ()),
             _model: std::marker::PhantomData,
@@ -62,6 +64,7 @@ where
         NewMessage: Send + Sync + 'static,
         NewB: Backend<Event> + Clone + 'static,
     {
+        debug!("App::with_backend: swapping backend for new type");
         let mut new_builder = WinitInstance::builder(component, backend);
         // carry over settings
         new_builder.runtime_builder = self.builder.runtime_builder;
@@ -186,9 +189,13 @@ where
     }
 
     pub fn run(self) -> Result<(), winit::error::EventLoopError> {
+        debug!("App::run: building WinitInstance");
         let mut winit_app = self.builder.build().expect("Failed to build WinitInstance");
         let event_loop = winit::event_loop::EventLoop::<Message>::with_user_event().build()?;
+        trace!("App::run: starting event loop");
         event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
-        event_loop.run_app(&mut winit_app)
+        let result = event_loop.run_app(&mut winit_app);
+        trace!("App::run: event loop exited");
+        result
     }
 }

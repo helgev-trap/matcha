@@ -2,6 +2,7 @@ use core::panic;
 use std::sync::Arc;
 
 use gpu_utils::gpu::Gpu;
+use log::{debug, trace, warn};
 use parking_lot::RwLock;
 use renderer::{CoreRenderer, RenderNode};
 use utils::{back_prop_dirty::BackPropDirty, update_flag::UpdateFlag};
@@ -58,6 +59,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         component: Box<dyn AnyComponent<Message, Event>>,
         mouse_state_config: MouseStateConfig,
     ) -> Result<Self, WindowUiError> {
+        trace!("WindowUi::new: initializing window UI");
         Ok(Self {
             window: Arc::new(RwLock::new(WindowSurface::new())),
             component,
@@ -110,10 +112,15 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
 
 impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
     pub fn resize_window(&self, new_size: PhysicalSize<u32>, device: &wgpu::Device) {
+        trace!(
+            "WindowUi::resize_window: new_size={}x{}",
+            new_size.width, new_size.height
+        );
         self.window.write().set_surface_size(new_size, device);
     }
 
     pub fn request_redraw(&self) {
+        trace!("WindowUi::request_redraw called");
         self.window.read().request_redraw();
     }
 }
@@ -124,12 +131,14 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         winit_event_loop: &winit::event_loop::ActiveEventLoop,
         gpu: &Gpu,
     ) -> Result<(), crate::window_surface::WindowSurfaceError> {
+        trace!("WindowUi::start_window: initializing window surface");
         self.window.write().start_window(winit_event_loop, gpu)
     }
 
     // start component setup function
     // TODO: This is provisional implementation. Refactor this after organizing async execution flow.
     pub async fn setup(&self, tokio_handle: &tokio::runtime::Handle, resource: &GlobalResources) {
+        trace!("WindowUi::setup: invoking component setup");
         self.component
             .setup(&resource.application_context(tokio_handle, &self.window))
     }
@@ -149,10 +158,12 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         renderer: &CoreRenderer,
         benchmark: &mut utils::benchmark::Benchmark,
     ) -> Option<RenderResult> {
+        trace!("WindowUi::render: begin");
         let mut window = self.window.upgradable_read();
 
         // check window existence
         if window.window().is_none() {
+            trace!("WindowUi::render: window not started, initializing");
             window.with_upgraded(|window| {
                     // reset widget and states
                     self.widget = None;
@@ -182,9 +193,11 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         {
             Ok(texture) => texture,
             Err(e) => {
+                warn!("WindowUi::render: failed to get surface texture: {e:?}");
                 match e {
                     wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
                         // reconfigure the surface
+                        debug!("WindowUi::render: surface lost, reconfiguring");
                         window.with_upgraded(|w| {
                             w.reconfigure_surface(&resource.gpu().device());
                         });
@@ -196,12 +209,15 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
                     }
                     wgpu::SurfaceError::Timeout => {
                         // skip this frame
+                        warn!("WindowUi::render: surface timeout, skipping frame");
                         return None;
                     }
                     wgpu::SurfaceError::OutOfMemory => {
+                        warn!("WindowUi::render: surface out of memory");
                         panic!("out of memory");
                     }
                     wgpu::SurfaceError::Other => {
+                        warn!("WindowUi::render: surface returned unknown error");
                         panic!("unknown error at wgpu surface");
                     }
                 }
@@ -219,6 +235,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
 
         if self.widget.is_none() {
             // directly build widget tree from dom
+            trace!("WindowUi::render: building widget tree");
             let dom = benchmark
                 .with_async("create_dom", self.component.view())
                 .await;
@@ -235,6 +252,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
             widget.update_dirty_flags(BackPropDirty::new(true), BackPropDirty::new(true));
         } else if self.model_update_detecter.is_true() {
             // Widget update is required
+            trace!("WindowUi::render: updating widget tree");
             let dom = benchmark
                 .with_async("create_dom", self.component.view())
                 .await;
@@ -281,6 +299,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
             surface_format,
         };
 
+        trace!("WindowUi::render: completed");
         Some(render_result)
     }
 
@@ -379,9 +398,11 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
     ) -> Option<Event> {
         // check window existence
         if self.window.read().window().is_none() {
+            trace!("WindowUi::window_event: ignoring event before window start");
             return None;
         }
 
+        trace!("WindowUi::window_event: received {window_event:?}");
         let ctx = resource.widget_context(tokio_handle, &self.window);
 
         let window_clone = self.window.clone();
@@ -411,8 +432,13 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
             self.convert_winit_to_window_event(window_event, get_window_size, get_window_position);
 
         if let (Some(widget), Some(event)) = (&mut self.widget, event) {
-            widget.device_input(&event, &ctx)
+            let result = widget.device_input(&event, &ctx);
+            if result.is_some() {
+                trace!("WindowUi::window_event: widget produced event");
+            }
+            result
         } else {
+            trace!("WindowUi::window_event: no widget or no device input");
             None
         }
     }
@@ -423,6 +449,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         tokio_runtime: &tokio::runtime::Handle,
         resource: &GlobalResources,
     ) {
+        trace!("WindowUi::user_event: forwarding user event");
         let widget_ctx = &resource.widget_context(tokio_runtime, &self.window);
 
         let app_ctx = widget_ctx.application_context();

@@ -1,3 +1,4 @@
+use log::{debug, trace, warn};
 use std::sync::Arc;
 
 use crate::render_node::RenderNode;
@@ -135,6 +136,7 @@ pub struct CoreRenderer {
 
 impl CoreRenderer {
     pub fn new(device: &wgpu::Device) -> Self {
+        debug!("CoreRenderer::new: initializing renderer");
         // Sampler
         let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("ObjectRenderer Sampler"),
@@ -261,6 +263,7 @@ impl CoreRenderer {
                 &texture_bind_group_layout,
                 &data_bind_group_layout,
             );
+        trace!("CoreRenderer::new: pipeline layouts created");
 
         let render_pipeline = moka::sync::Cache::builder()
             .max_capacity(PIPELINE_CACHE_SIZE)
@@ -287,6 +290,8 @@ impl CoreRenderer {
             mapped_at_creation: false,
         });
 
+        trace!("CoreRenderer::new: renderer state initialized");
+
         Self {
             texture_sampler,
             texture_bind_group_layout,
@@ -308,6 +313,7 @@ impl CoreRenderer {
         device: &wgpu::Device,
         bind_group_layout: &wgpu::BindGroupLayout,
     ) -> (wgpu::PipelineLayout, wgpu::ComputePipeline) {
+        trace!("CoreRenderer::create_culling_pipeline: creating pipeline");
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Culling Shader"),
             source: wgpu::ShaderSource::Wgsl(WGSL_CULL.into()),
@@ -330,6 +336,7 @@ impl CoreRenderer {
             compilation_options: Default::default(),
             cache: None,
         });
+        trace!("CoreRenderer::create_culling_pipeline: pipeline ready");
 
         (pipeline_layout, pipeline)
     }
@@ -338,6 +345,7 @@ impl CoreRenderer {
         device: &wgpu::Device,
         bind_group_layout: &wgpu::BindGroupLayout,
     ) -> (wgpu::PipelineLayout, wgpu::ComputePipeline) {
+        trace!("CoreRenderer::create_command_pipeline: creating pipeline");
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Command Shader"),
             source: wgpu::ShaderSource::Wgsl(WGSL_COMMAND.into()),
@@ -357,6 +365,7 @@ impl CoreRenderer {
             compilation_options: Default::default(),
             cache: None,
         });
+        trace!("CoreRenderer::create_command_pipeline: pipeline ready");
 
         (pipeline_layout, pipeline)
     }
@@ -366,6 +375,7 @@ impl CoreRenderer {
         texture_bind_group_layout: &wgpu::BindGroupLayout,
         data_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> (wgpu::PipelineLayout, wgpu::ShaderModule) {
+        trace!("CoreRenderer::create_render_pipeline_layout: creating pipeline layout");
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Render Shader"),
             source: wgpu::ShaderSource::Wgsl(WGSL_RENDER.into()),
@@ -389,6 +399,10 @@ impl CoreRenderer {
         shader_module: &wgpu::ShaderModule,
         target_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
+        trace!(
+            "CoreRenderer::create_render_pipeline: building pipeline for format {:?}",
+            target_format
+        );
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(render_pipeline_layout),
@@ -441,6 +455,12 @@ impl CoreRenderer {
         texture_atlas: &wgpu::Texture,
         stencil_atlas: &wgpu::Texture,
     ) -> Result<(), TextureValidationError> {
+        trace!(
+            "CoreRenderer::render: begin render_node_count={} surface_format={:?} destination_size={:?}",
+            render_node.count(),
+            surface_format,
+            destination_size
+        );
         // #[cfg(debug_assertions)]
         // {
         //     println!(
@@ -459,6 +479,11 @@ impl CoreRenderer {
             texture_atlas.format(),
             stencil_atlas.format(),
         )?;
+        trace!(
+            "CoreRenderer::render: prepared {} instances and {} stencils",
+            instances.len(),
+            stencils.len()
+        );
 
         // #[cfg(debug_assertions)]
         // {
@@ -466,11 +491,13 @@ impl CoreRenderer {
         // }
 
         if instances.is_empty() {
+            trace!("CoreRenderer::render: no instances to render");
             return Ok(());
         }
 
         // get or create render pipeline that matches given surface format
         let render_pipeline = self.render_pipeline.get_with(surface_format, || {
+            trace!("CoreRenderer::render: creating render pipeline for format {surface_format:?}");
             Arc::new(Self::create_render_pipeline(
                 device,
                 &self.render_pipeline_layout,
@@ -593,6 +620,7 @@ impl CoreRenderer {
         let mut command_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("ObjectRenderer: Command Encoder"),
         });
+        trace!("CoreRenderer::render: command encoder created");
 
         let normalize_matrix = make_normalize_matrix(destination_size);
         let cull_pc = CullingPushConstants {
@@ -617,6 +645,7 @@ impl CoreRenderer {
                 1,
             );
         }
+        trace!("CoreRenderer::render: culling pass dispatched");
 
         // command encoding pass
         {
@@ -629,6 +658,7 @@ impl CoreRenderer {
             command_pass.set_bind_group(0, &data_bind_group, &[]);
             command_pass.dispatch_workgroups(1, 1, 1);
         }
+        trace!("CoreRenderer::render: command pass dispatched");
 
         command_encoder.copy_buffer_to_buffer(
             &self.draw_command_storage,
@@ -665,8 +695,10 @@ impl CoreRenderer {
             );
             render_pass.draw_indirect(&self.draw_command, 0);
         }
+        trace!("CoreRenderer::render: render pass completed");
 
         queue.submit(std::iter::once(command_encoder.finish()));
+        trace!("CoreRenderer::render: commands submitted");
 
         Ok(())
     }
@@ -677,6 +709,7 @@ fn create_instance_and_stencil_data(
     texture_format: wgpu::TextureFormat,
     stencil_format: wgpu::TextureFormat,
 ) -> Result<(Vec<InstanceData>, Vec<StencilData>), TextureValidationError> {
+    trace!("CoreRenderer::create_instance_and_stencil_data: start");
     let mut instances = Vec::new();
     let mut stencils = Vec::new();
 
@@ -695,6 +728,11 @@ fn create_instance_and_stencil_data(
         0,
     )?;
 
+    trace!(
+        "CoreRenderer::create_instance_and_stencil_data: completed with {} instances and {} stencils",
+        instances.len(),
+        stencils.len()
+    );
     Ok((instances, stencils))
 }
 
@@ -714,12 +752,14 @@ fn create_instance_and_stencil_data_recursive(
 ) -> Result<(), TextureValidationError> {
     if let Some((stencil, stencil_position)) = &object.stencil() {
         if stencil.format() != stencil_format {
+            warn!("CoreRenderer: stencil format mismatch");
             return Err(TextureValidationError::FormatMismatch);
         }
 
         let atlas_id = stencil_atlas_id.get_or_insert_with(|| stencil.atlas_id());
 
         if atlas_id != &stencil.atlas_id() {
+            warn!("CoreRenderer: stencil atlas id mismatch");
             return Err(TextureValidationError::AtlasIdMismatch);
         }
 
@@ -748,12 +788,14 @@ fn create_instance_and_stencil_data_recursive(
 
     if let Some((texture, texture_position)) = &object.texture() {
         if texture.format() != texture_format {
+            warn!("CoreRenderer: texture format mismatch");
             return Err(TextureValidationError::FormatMismatch);
         }
 
         let atlas_id = texture_atlas_id.get_or_insert_with(|| texture.atlas_id());
 
         if atlas_id != &texture.atlas_id() {
+            warn!("CoreRenderer: texture atlas id mismatch");
             return Err(TextureValidationError::AtlasIdMismatch);
         }
 

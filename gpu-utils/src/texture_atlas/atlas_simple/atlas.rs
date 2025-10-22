@@ -3,6 +3,7 @@ use std::sync::{Arc, Weak};
 
 use guillotiere::euclid::Box2D;
 use guillotiere::{AllocId, AtlasAllocator, Size, euclid};
+use log::{trace, warn};
 use parking_lot::Mutex;
 use thiserror::Error;
 use uuid::Uuid;
@@ -42,16 +43,26 @@ impl std::fmt::Debug for RegionData {
 /// User code should not need to know about its id, location, or atlas.
 impl AtlasRegion {
     pub fn atlas_id(&self) -> TextureAtlasId {
+        trace!(
+            "AtlasRegion::atlas_id called for region={:?}",
+            self.inner.region_id
+        );
         self.inner.atlas_id
     }
 
     pub fn position_in_atlas(&self) -> Result<(u32, Box2D<f32, euclid::UnknownUnit>), RegionError> {
+        trace!(
+            "AtlasRegion::position_in_atlas: querying region={:?}",
+            self.inner.region_id
+        );
         // Get the texture location in the atlas
         let Some(atlas) = self.inner.atlas.upgrade() else {
+            warn!("AtlasRegion::position_in_atlas: atlas dropped");
             return Err(RegionError::AtlasGone);
         };
         let atlas = atlas.lock();
         let Some(location) = atlas.get_location(self.inner.region_id) else {
+            warn!("AtlasRegion::position_in_atlas: region not found in atlas");
             return Err(RegionError::TextureNotFoundInAtlas);
         };
 
@@ -78,12 +89,19 @@ impl AtlasRegion {
     }
 
     pub fn translate_uv(&self, uvs: &[[f32; 2]]) -> Result<Vec<[f32; 2]>, RegionError> {
+        trace!(
+            "AtlasRegion::translate_uv: translating {} vertices for region={:?}",
+            uvs.len(),
+            self.inner.region_id
+        );
         // Get the texture location in the atlas
         let Some(atlas) = self.inner.atlas.upgrade() else {
+            warn!("AtlasRegion::translate_uv: atlas dropped");
             return Err(RegionError::AtlasGone);
         };
         let atlas = atlas.lock();
         let Some(location) = atlas.get_location(self.inner.region_id) else {
+            warn!("AtlasRegion::translate_uv: region not found in atlas");
             return Err(RegionError::TextureNotFoundInAtlas);
         };
         let x_max = location.uv.max.x;
@@ -106,6 +124,11 @@ impl AtlasRegion {
     }
 
     pub fn write_data(&self, queue: &wgpu::Queue, data: &[u8]) -> Result<(), RegionError> {
+        trace!(
+            "AtlasRegion::write_data: uploading {} bytes to region={:?}",
+            data.len(),
+            self.inner.region_id
+        );
         // Check data consistency
         let bytes_per_pixel = self
             .inner
@@ -114,6 +137,11 @@ impl AtlasRegion {
             .ok_or(RegionError::InvalidFormatBlockCopySize)?;
         let expected_size = self.inner.size[0] * self.inner.size[1] * bytes_per_pixel;
         if data.len() as u32 != expected_size {
+            warn!(
+                "AtlasRegion::write_data: data size mismatch (expected {} bytes, got {})",
+                expected_size,
+                data.len()
+            );
             return Err(RegionError::DataConsistencyError(format!(
                 "Data size({}byte) does not match expected size({}byte)",
                 data.len(),
@@ -123,12 +151,14 @@ impl AtlasRegion {
 
         // Get the texture in the atlas and location
         let Some(atlas) = self.inner.atlas.upgrade() else {
+            warn!("AtlasRegion::write_data: atlas dropped");
             return Err(RegionError::AtlasGone);
         };
         let atlas = atlas.lock();
 
         let texture = atlas.texture();
         let Some(location) = atlas.get_location(self.inner.region_id) else {
+            warn!("AtlasRegion::write_data: region not found in atlas");
             return Err(RegionError::TextureNotFoundInAtlas);
         };
 
@@ -159,6 +189,8 @@ impl AtlasRegion {
                 depth_or_array_layers: 1,
             },
         );
+
+        trace!("AtlasRegion::write_data: upload completed");
 
         Ok(())
     }

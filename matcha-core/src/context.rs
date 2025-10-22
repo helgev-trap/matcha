@@ -2,6 +2,7 @@ use fxhash::FxBuildHasher;
 use gpu_utils::gpu::Gpu;
 use gpu_utils::gpu_type_map::GpuTypeMap;
 use gpu_utils::texture_atlas::TextureAtlas;
+use log::{debug, trace, warn};
 use parking_lot::lock_api::RwLockReadGuard;
 use parking_lot::{Mutex, RwLock};
 use std::sync::{Arc, Weak};
@@ -27,6 +28,10 @@ pub struct GlobalResources {
 
 impl GlobalResources {
     pub fn new(gpu: Arc<Gpu>) -> Self {
+        debug!(
+            "GlobalResources::new: initializing with max_texture_dimension_2d={}",
+            gpu.limits().max_texture_dimension_2d
+        );
         let max_size_2d = gpu.limits().max_texture_dimension_2d as u32;
         let texture = TextureAtlas::new(
             &gpu.device(),
@@ -55,7 +60,9 @@ impl GlobalResources {
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
-        Self {
+        trace!("GlobalResources::new: command channel initialized");
+
+        let resources = Self {
             gpu,
             texture,
             stencil,
@@ -65,7 +72,10 @@ impl GlobalResources {
             debug_config,
             command_receiver: rx,
             command_sender: tx,
-        }
+        };
+
+        trace!("GlobalResources::new: completed setup of shared resources");
+        resources
     }
 }
 
@@ -115,6 +125,7 @@ impl GlobalResources {
         task_executor: &tokio::runtime::Handle,
         window_surface: &Arc<RwLock<WindowSurface>>,
     ) -> WidgetContext {
+        trace!("GlobalResources::widget_context: creating widget context");
         WidgetContext {
             task_executor: task_executor.clone(),
             window_surface: Arc::downgrade(window_surface),
@@ -135,6 +146,7 @@ impl GlobalResources {
         task_executor: &tokio::runtime::Handle,
         window_surface: &Arc<RwLock<WindowSurface>>,
     ) -> ApplicationContext {
+        trace!("GlobalResources::application_context: creating application context");
         ApplicationContext {
             task_executor: task_executor.clone(),
             window_surface: Arc::downgrade(window_surface),
@@ -179,6 +191,9 @@ pub struct WidgetContext {
 
 impl WidgetContext {
     pub(crate) fn application_context(&self) -> ApplicationContext {
+        trace!(
+            "WidgetContext::application_context: promoting widget context to application context"
+        );
         ApplicationContext {
             task_executor: self.task_executor.clone(),
             window_surface: self.window_surface.clone(),
@@ -312,7 +327,13 @@ impl ApplicationContext {
     /// Enqueue a Quit command.
     pub fn quit(&self) {
         if let Some(sender) = self.command_sender.upgrade() {
-            sender.send(ApplicationCommand::Quit);
+            if sender.send(ApplicationCommand::Quit).is_err() {
+                warn!("ApplicationContext::quit: receiver dropped before handling quit");
+            } else {
+                trace!("ApplicationContext::quit: quit command sent");
+            }
+        } else {
+            warn!("ApplicationContext::quit: command sender unavailable");
         }
     }
 
@@ -330,9 +351,9 @@ pub(crate) struct AnyConfig {
 
 impl AnyConfig {
     pub fn new() -> Self {
-        Self {
-            configs: std::collections::HashMap::with_hasher(FxBuildHasher::default()),
-        }
+        let configs = std::collections::HashMap::with_hasher(FxBuildHasher::default());
+        trace!("AnyConfig::new: creating empty nested config store");
+        Self { configs }
     }
 
     /// Insert a nested configuration of type T.
@@ -340,6 +361,10 @@ impl AnyConfig {
     where
         T: Send + Sync + 'static,
     {
+        trace!(
+            "AnyConfig::set: storing config type_id={:?}",
+            std::any::TypeId::of::<T>()
+        );
         self.configs
             .insert(std::any::TypeId::of::<T>(), Arc::new(config));
     }
@@ -393,6 +418,7 @@ impl WidgetContext {
 
         // task executor: prefer existing tokio handle, otherwise create a
         // dedicated current-thread runtime and leak it so the handle remains valid
+        trace!("WidgetContext::new_for_tests: constructing test context");
         let task_executor: tokio::runtime::Handle = match tokio::runtime::Handle::try_current() {
             Ok(h) => h,
             Err(_) => {

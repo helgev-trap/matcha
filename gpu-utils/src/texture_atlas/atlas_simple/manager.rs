@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use log::{debug, trace, warn};
 use parking_lot::Mutex;
 use thiserror::Error;
 
@@ -31,6 +32,12 @@ impl AtlasManager {
         memory_strategy: MemoryAllocateStrategy,
         max_size_of_3d_texture: wgpu::Extent3d,
     ) -> Self {
+        trace!(
+            "AtlasManager::new: max_size={}x{} layers={}",
+            max_size_of_3d_texture.width,
+            max_size_of_3d_texture.height,
+            max_size_of_3d_texture.depth_or_array_layers
+        );
         Self {
             device,
             queue,
@@ -42,6 +49,10 @@ impl AtlasManager {
 
     pub fn add_format(&self, format: wgpu::TextureFormat) -> Result<(), AtlasManagerError> {
         if self.atlases.contains_key(&format) {
+            warn!(
+                "AtlasManager::add_format: format {:?} already exists",
+                format
+            );
             return Err(AtlasManagerError::FormatSetAlreadyExists);
         }
 
@@ -55,6 +66,7 @@ impl AtlasManager {
             format,
         );
         self.atlases.insert(format, atlas);
+        debug!("AtlasManager::add_format: added format {:?}", format);
 
         Ok(())
     }
@@ -65,11 +77,16 @@ impl AtlasManager {
         format: wgpu::TextureFormat,
     ) -> Result<AtlasRegion, AtlasManagerError> {
         if size[0] == 0 || size[1] == 0 {
+            warn!("AtlasManager::allocate: zero-sized allocation requested");
             return Err(AtlasManagerError::InvalidTextureSize);
         }
         if size[0] > self.max_size_of_3d_texture.width
             || size[1] > self.max_size_of_3d_texture.height
         {
+            warn!(
+                "AtlasManager::allocate: requested size {:?} exceeds max",
+                size
+            );
             return Err(AtlasManagerError::InvalidTextureSize);
         }
 
@@ -77,6 +94,10 @@ impl AtlasManager {
             .atlases
             .get(&format)
             .ok_or(AtlasManagerError::FormatSetNotFound)?;
+        trace!(
+            "AtlasManager::allocate: allocating {:?} in format {:?}",
+            size, format
+        );
         let mut atlas = atlas_entry.lock();
 
         // Try to allocate directly.

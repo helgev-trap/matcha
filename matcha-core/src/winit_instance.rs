@@ -1,3 +1,4 @@
+use log::{debug, error, trace};
 use renderer::{CoreRenderer, core_renderer};
 use std::fmt::Debug;
 use thiserror::Error;
@@ -61,15 +62,19 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
         winit_event_loop: &winit::event_loop::ActiveEventLoop,
         force: bool,
     ) -> Result<(), RenderError> {
+        trace!("WinitInstance::render: begin window_id={window_id:?} force={force}");
         let Some(window_ui) = self.windows.get_mut(0) else {
+            error!("WinitInstance::render: window not found");
             return Err(RenderError::WindowNotFound);
         };
 
         // Check if the UI needs to be re-rendered before getting the surface texture
         if !window_ui.needs_render() && !force {
+            trace!("WinitInstance::render: skipping render (no changes)");
             return Ok(());
         }
 
+        trace!("WinitInstance::render: invoking window_ui.render");
         let object = {
             self.tokio_runtime.block_on(window_ui.render(
                 self.tokio_runtime.handle(),
@@ -88,9 +93,14 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
         }) = object
         else {
             // Nothing to render
+            trace!("WinitInstance::render: nothing to render");
             return Ok(());
         };
 
+        trace!(
+            "WinitInstance::render: rendering with viewport_size={:?} format={:?}",
+            viewport_size, surface_format
+        );
         let device = self.resource.gpu().device();
         let queue = self.resource.gpu().queue();
 
@@ -129,13 +139,17 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
 
         surface_texture.present();
 
+        trace!("WinitInstance::render: present complete");
+
         Ok(())
     }
 
     fn handle_commands(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        trace!("WinitInstance::handle_commands: draining command queue");
         while let Ok(command) = self.resource.command_receiver().try_recv() {
             match command {
                 ApplicationCommand::Quit => {
+                    debug!("WinitInstance::handle_commands: received quit command");
                     event_loop.exit();
                 }
             }
@@ -154,9 +168,11 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
     // MARK: resumed
 
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        debug!("WinitInstance::resumed: restarting windows");
         self.tokio_runtime.block_on(async {
             // start window
             for window_ui in self.windows.iter_mut() {
+                trace!("WinitInstance::resumed: starting window");
                 let _ = window_ui
                     .start_window(event_loop, self.resource.gpu())
                     .await;
@@ -164,6 +180,7 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
 
             // call setup function
             for window_ui in self.windows.iter_mut() {
+                trace!("WinitInstance::resumed: running setup");
                 window_ui
                     .setup(self.tokio_runtime.handle(), &self.resource)
                     .await;
@@ -179,15 +196,23 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
         window_id: winit::window::WindowId,
         event: winit::event::WindowEvent,
     ) {
+        trace!(
+            "WinitInstance::window_event: window_id={window_id:?} event={:?}",
+            event
+        );
         // events which are to be handled by render system
         match event {
             winit::event::WindowEvent::RedrawRequested => {
                 if let Err(e) = self.render(window_id, event_loop, false) {
-                    todo!("Render error: {:?}", e);
+                    error!("WinitInstance::window_event: render error: {e:?}");
                 }
             }
             winit::event::WindowEvent::Resized(physical_size) => {
                 if let Some(window_ui) = self.windows.get_mut(0) {
+                    trace!(
+                        "WinitInstance::window_event: resized to {}x{}",
+                        physical_size.width, physical_size.height
+                    );
                     window_ui.resize_window(physical_size, &self.resource.gpu().device());
                     window_ui.request_redraw();
                 }
@@ -198,12 +223,14 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
         // convert window event to Event
 
         let Some(window_ui) = self.windows.get_mut(0) else {
+            trace!("WinitInstance::window_event: no windows registered");
             return;
         };
 
         let event = window_ui.window_event(event, self.tokio_runtime.handle(), &self.resource);
 
         if let Some(event) = event {
+            trace!("WinitInstance::window_event: dispatching backend event");
             self.tokio_runtime.block_on(self.backend.send_event(event));
         }
 
@@ -217,10 +244,12 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
         _: &winit::event_loop::ActiveEventLoop,
         cause: winit::event::StartCause,
     ) {
+        trace!("WinitInstance::new_events: cause={cause:?}");
         match cause {
             winit::event::StartCause::Init => {}
             winit::event::StartCause::WaitCancelled { .. } => {}
             winit::event::StartCause::ResumeTimeReached { .. } | winit::event::StartCause::Poll => {
+                trace!("WinitInstance::new_events: requesting redraw on all windows");
                 for window_ui in self.windows.iter_mut() {
                     window_ui.request_redraw();
                 }
@@ -231,6 +260,7 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
     // MARK: user_event
 
     fn user_event(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, event: Message) {
+        trace!("WinitInstance::user_event: received user event");
         for window_ui in self.windows.iter_mut() {
             window_ui.user_event(&event, self.tokio_runtime.handle(), &self.resource);
             window_ui.request_redraw();
@@ -247,22 +277,30 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
         device_id: winit::event::DeviceId,
         event: winit::event::DeviceEvent,
     ) {
+        trace!(
+            "WinitInstance::device_event: device_id={device_id:?} event={:?}",
+            event
+        );
         let _ = (event_loop, device_id, event);
     }
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        trace!("WinitInstance::about_to_wait");
         let _ = event_loop;
     }
 
     fn suspended(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        trace!("WinitInstance::suspended");
         let _ = event_loop;
     }
 
     fn exiting(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        debug!("WinitInstance::exiting");
         let _ = event_loop;
     }
 
     fn memory_warning(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        trace!("WinitInstance::memory_warning");
         let _ = event_loop;
     }
 }

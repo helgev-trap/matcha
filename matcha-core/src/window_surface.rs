@@ -1,4 +1,5 @@
 use gpu_utils::gpu::Gpu;
+use log::{debug, trace};
 use std::sync::Arc;
 use thiserror::Error;
 use winit::{
@@ -24,6 +25,7 @@ pub enum WindowSurface {
 /// Creation and configuration
 impl WindowSurface {
     pub fn new() -> Self {
+        trace!("WindowSurface::new: initializing config");
         Self::Config {
             title: "Matcha App".to_string(),
             size: PhysicalSize::new(800, 600),
@@ -33,6 +35,7 @@ impl WindowSurface {
     }
 
     pub fn set_title(&mut self, title: &str) {
+        trace!("WindowSurface::set_title: title={title}");
         match self {
             WindowSurface::Window { window, .. } => {
                 window.set_title(title);
@@ -48,6 +51,10 @@ impl WindowSurface {
     /// This method will cause a `Resized` event to be emitted.
     /// After that, you should call `set_surface_size` to update the surface configuration.
     pub fn request_inner_size(&mut self, size: PhysicalSize<u32>) {
+        trace!(
+            "WindowSurface::request_inner_size: requested size={}x{}",
+            size.width, size.height
+        );
         match self {
             WindowSurface::Window { window, .. } => {
                 let _ = window.request_inner_size(size);
@@ -61,6 +68,7 @@ impl WindowSurface {
     /// Update the surface configuration size. No-op if in Config mode.
     pub fn set_surface_size(&mut self, size: PhysicalSize<u32>, device: &wgpu::Device) {
         if size.width == 0 || size.height == 0 {
+            trace!("WindowSurface::set_surface_size: ignoring zero size update");
             return;
         }
 
@@ -72,6 +80,10 @@ impl WindowSurface {
             } => {
                 surface_config.width = size.width;
                 surface_config.height = size.height;
+                trace!(
+                    "WindowSurface::set_surface_size: configuring surface to {}x{}",
+                    size.width, size.height
+                );
                 surface.configure(device, surface_config);
             }
             WindowSurface::Config { size: s, .. } => {
@@ -81,6 +93,7 @@ impl WindowSurface {
     }
 
     pub fn set_maximized(&mut self, maximized: bool) {
+        trace!("WindowSurface::set_maximized: maximized={maximized}");
         match self {
             WindowSurface::Window { window, .. } => {
                 window.set_maximized(maximized);
@@ -92,6 +105,7 @@ impl WindowSurface {
     }
 
     pub fn set_fullscreen(&mut self, fullscreen: bool) {
+        trace!("WindowSurface::set_fullscreen: fullscreen={fullscreen}");
         match self {
             WindowSurface::Window { window, .. } => {
                 if fullscreen {
@@ -113,8 +127,10 @@ impl WindowSurface {
         event_loop: &ActiveEventLoop,
         gpu: &Gpu,
     ) -> Result<(), WindowSurfaceError> {
+        debug!("WindowSurface::start_window: starting window lifecycle");
         // If already Window, nothing to do
         if let WindowSurface::Window { .. } = self {
+            trace!("WindowSurface::start_window: already initialized");
             return Ok(());
         }
 
@@ -135,17 +151,25 @@ impl WindowSurface {
             .with_maximized(maximized);
 
         let window = Arc::new(event_loop.create_window(window_attributes)?);
+        trace!(
+            "WindowSurface::start_window: window created ({}x{})",
+            init_size.width, init_size.height
+        );
 
         if fullscreen {
             window.set_fullscreen(Some(Fullscreen::Borderless(None)));
         }
 
         let surface = gpu.instance().create_surface(window.clone())?;
+        trace!("WindowSurface::start_window: surface created");
 
         let if_preferred_format_supported = surface
             .get_capabilities(gpu.adapter())
             .formats
             .contains(&gpu.preferred_surface_format());
+        trace!(
+            "WindowSurface::start_window: preferred_format_supported={if_preferred_format_supported}"
+        );
 
         let mut surface_config = surface
             .get_default_config(
@@ -161,12 +185,21 @@ impl WindowSurface {
                 config
             })
             .ok_or(WindowSurfaceError::SurfaceConfiguration)?;
+        trace!(
+            "WindowSurface::start_window: default config width={} height={} format={:?}",
+            surface_config.width, surface_config.height, surface_config.format
+        );
 
         if if_preferred_format_supported {
             surface_config.format = gpu.preferred_surface_format();
+            trace!(
+                "WindowSurface::start_window: applying preferred format {:?}",
+                surface_config.format
+            );
         }
 
         surface.configure(&gpu.device(), &surface_config);
+        trace!("WindowSurface::start_window: surface configured");
 
         // Replace self with Window variant, preserving settings
         *self = WindowSurface::Window {
@@ -174,6 +207,8 @@ impl WindowSurface {
             surface,
             surface_config,
         };
+
+        debug!("WindowSurface::start_window: window initialization complete");
 
         Ok(())
     }
@@ -186,11 +221,16 @@ impl WindowSurface {
         } = self
         {
             if window.inner_size().width == 0 || window.inner_size().height == 0 {
+                trace!("WindowSurface::reconfigure_surface: skipping due to zero-sized window");
                 return;
             }
 
             surface_config.width = window.inner_size().width;
             surface_config.height = window.inner_size().height;
+            trace!(
+                "WindowSurface::reconfigure_surface: new size {}x{}",
+                surface_config.width, surface_config.height
+            );
             surface.configure(device, surface_config);
         }
     }
@@ -198,6 +238,7 @@ impl WindowSurface {
     pub fn end_window(&mut self) {
         // If already Config, nothing to do
         if let WindowSurface::Config { .. } = self {
+            trace!("WindowSurface::end_window: already in config mode");
             return;
         }
 
@@ -219,6 +260,7 @@ impl WindowSurface {
             maximized,
             fullscreen,
         };
+        debug!("WindowSurface::end_window: window torn down");
     }
 }
 
@@ -226,6 +268,7 @@ impl WindowSurface {
 impl WindowSurface {
     pub fn request_redraw(&self) {
         if let WindowSurface::Window { window, .. } = self {
+            trace!("WindowSurface::request_redraw: requested");
             window.request_redraw();
         }
     }
