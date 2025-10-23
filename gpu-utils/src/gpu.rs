@@ -67,7 +67,7 @@ pub struct Gpu {
     device_lost_callback: Mutex<
         HashMap<
             CallbackId,
-            Box<dyn Fn(&wgpu::DeviceLostReason, &str) + Send + Sync>,
+            Arc<dyn Fn(&wgpu::DeviceLostReason, &str) + Send + Sync>,
             FxBuildHasher,
         >,
     >,
@@ -77,10 +77,10 @@ pub struct Gpu {
     /// Whether a recovery attempt is currently running
     is_recovering: AtomicBool,
     device_recover_callback: Mutex<
-        HashMap<CallbackId, Box<dyn Fn(wgpu::Device, wgpu::Queue) + Send + Sync>, FxBuildHasher>,
+        HashMap<CallbackId, Arc<dyn Fn(wgpu::Device, wgpu::Queue) + Send + Sync>, FxBuildHasher>,
     >,
     device_recover_failed_callback: Mutex<
-        HashMap<CallbackId, Box<dyn Fn(&wgpu::RequestDeviceError) + Send + Sync>, FxBuildHasher>,
+        HashMap<CallbackId, Arc<dyn Fn(&wgpu::RequestDeviceError) + Send + Sync>, FxBuildHasher>,
     >,
 
     weak_self: Weak<Gpu>,
@@ -196,9 +196,10 @@ impl Gpu {
         callback: impl Fn(&wgpu::DeviceLostReason, &str) + Send + Sync + 'static,
     ) -> CallbackId {
         let id = CallbackId::new();
+        let callback: Arc<dyn Fn(&wgpu::DeviceLostReason, &str) + Send + Sync> = Arc::new(callback);
         self.device_lost_callback
             .lock()
-            .insert(id, Box::new(callback));
+            .insert(id, Arc::clone(&callback));
         id
     }
 
@@ -218,9 +219,10 @@ impl Gpu {
         callback: impl Fn(wgpu::Device, wgpu::Queue) + Send + Sync + 'static,
     ) -> CallbackId {
         let id = CallbackId::new();
+        let callback: Arc<dyn Fn(wgpu::Device, wgpu::Queue) + Send + Sync> = Arc::new(callback);
         self.device_recover_callback
             .lock()
-            .insert(id, Box::new(callback));
+            .insert(id, Arc::clone(&callback));
         id
     }
 
@@ -240,9 +242,10 @@ impl Gpu {
         callback: impl Fn(&wgpu::RequestDeviceError) + Send + Sync + 'static,
     ) -> CallbackId {
         let id = CallbackId::new();
+        let callback: Arc<dyn Fn(&wgpu::RequestDeviceError) + Send + Sync> = Arc::new(callback);
         self.device_recover_failed_callback
             .lock()
-            .insert(id, Box::new(callback));
+            .insert(id, Arc::clone(&callback));
         id
     }
 
@@ -379,7 +382,8 @@ impl Gpu {
         warn!("Gpu::handle_device_lost: device lost with reason={reason:?}, message={s}");
 
         // Call user callback if provided
-        for cb in self.device_lost_callback.lock().values() {
+        let callbacks: Vec<_> = self.device_lost_callback.lock().values().cloned().collect();
+        for cb in callbacks {
             cb(&reason, &s);
         }
 
@@ -431,7 +435,13 @@ impl Gpu {
                         debug!("Gpu::handle_device_lost: recovery completed successfully");
 
                         // Invoke recovery callback if provided.
-                        for cb in arc_self.device_recover_callback.lock().values() {
+                        let callbacks: Vec<_> = arc_self
+                            .device_recover_callback
+                            .lock()
+                            .values()
+                            .cloned()
+                            .collect();
+                        for cb in callbacks {
                             cb(new_device.clone(), new_queue.clone());
                         }
                     }
@@ -440,7 +450,13 @@ impl Gpu {
                         // Mark recovery finished.
                         arc_self.is_recovering.store(false, Ordering::Release);
 
-                        for cb in arc_self.device_recover_failed_callback.lock().values() {
+                        let callbacks: Vec<_> = arc_self
+                            .device_recover_failed_callback
+                            .lock()
+                            .values()
+                            .cloned()
+                            .collect();
+                        for cb in callbacks {
                             cb(&e);
                         }
                     }

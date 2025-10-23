@@ -159,73 +159,78 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         benchmark: &mut utils::benchmark::Benchmark,
     ) -> Option<RenderResult> {
         trace!("WindowUi::render: begin");
-        let mut window = self.window.upgradable_read();
+        let (surface, surface_format, viewport_size) = {
+            let mut window = self.window.upgradable_read();
 
-        // check window existence
-        if window.window().is_none() {
-            trace!("WindowUi::render: window not started, initializing");
-            window.with_upgraded(|window| {
-                    // reset widget and states
-                    self.widget = None;
-                    self.model_update_detecter = UpdateFlag::new();
-                    self.mouse_state = self.mouse_state_config.init().expect(
-                        "already checked mouse state config is valid when WindowUi is created or updated so this should not fail"
-                    );
-                    self.window_state = WindowState::default();
+            // check window existence
+            if window.window().is_none() {
+                trace!("WindowUi::render: window not started, initializing");
+                window.with_upgraded(|window| {
+                        // reset widget and states
+                        self.widget = None;
+                        self.model_update_detecter = UpdateFlag::new();
+                        self.mouse_state = self.mouse_state_config.init().expect(
+                            "already checked mouse state config is valid when WindowUi is created or updated so this should not fail"
+                        );
+                        self.window_state = WindowState::default();
 
-                    // start window
-                    window.start_window(
-                        winit_event_loop,
-                        &resource.gpu(),
-                    ).expect("failed to start window");
-                })
-        }
+                        // start window
+                        window.start_window(
+                            winit_event_loop,
+                            &resource.gpu(),
+                        ).expect("failed to start window");
+                    })
+            }
 
-        let viewport_size_physical = window.inner_size().expect("we checked window existence");
-        let viewport_size = [
-            viewport_size_physical.width as f32,
-            viewport_size_physical.height as f32,
-        ];
+            let viewport_size_physical = window.inner_size().expect("we checked window existence");
+            let viewport_size = [
+                viewport_size_physical.width as f32,
+                viewport_size_physical.height as f32,
+            ];
 
-        let surface = match window
-            .current_texture()
-            .expect("we checked window existence")
-        {
-            Ok(texture) => texture,
-            Err(e) => {
-                warn!("WindowUi::render: failed to get surface texture: {e:?}");
-                match e {
-                    wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
-                        // reconfigure the surface
-                        debug!("WindowUi::render: surface lost, reconfiguring");
-                        window.with_upgraded(|w| {
-                            w.reconfigure_surface(&resource.gpu().device());
-                        });
+            let surface = match window
+                .current_texture()
+                .expect("we checked window existence")
+            {
+                Ok(texture) => texture,
+                Err(e) => {
+                    warn!("WindowUi::render: failed to get surface texture: {e:?}");
+                    match e {
+                        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+                            // reconfigure the surface
+                            debug!("WindowUi::render: surface lost, reconfiguring");
+                            window.with_upgraded(|w| {
+                                w.reconfigure_surface(&resource.gpu().device());
+                            });
 
-                        // call rerender event
-                        window.request_redraw();
+                            // call rerender event
+                            window.request_redraw();
 
-                        return None;
-                    }
-                    wgpu::SurfaceError::Timeout => {
-                        // skip this frame
-                        warn!("WindowUi::render: surface timeout, skipping frame");
-                        return None;
-                    }
-                    wgpu::SurfaceError::OutOfMemory => {
-                        warn!("WindowUi::render: surface out of memory");
-                        panic!("out of memory");
-                    }
-                    wgpu::SurfaceError::Other => {
-                        warn!("WindowUi::render: surface returned unknown error");
-                        panic!("unknown error at wgpu surface");
+                            return None;
+                        }
+                        wgpu::SurfaceError::Timeout => {
+                            // skip this frame
+                            warn!("WindowUi::render: surface timeout, skipping frame");
+                            return None;
+                        }
+                        wgpu::SurfaceError::OutOfMemory => {
+                            warn!("WindowUi::render: surface out of memory");
+                            panic!("out of memory");
+                        }
+                        wgpu::SurfaceError::Other => {
+                            warn!("WindowUi::render: surface returned unknown error");
+                            panic!("unknown error at wgpu surface");
+                        }
                     }
                 }
-            }
+            };
+
+            let surface_format = window.format().expect("we checked window existence");
+
+            (surface, surface_format, viewport_size)
         };
 
         let surface_texture_view = surface.texture.create_view(&Default::default());
-        let surface_format = window.format().expect("we checked window existence");
 
         // placeholder background
         // TODO: consider this.
