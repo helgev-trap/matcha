@@ -232,7 +232,6 @@ impl<T: Send + Sync + 'static> Widget<Button<T>, T, ()> for ButtonNode<T> {
                 // For now, we replicate the old behavior of drawing to a texture atlas.
                 if let Ok(style_region) =
                     ctx.texture_atlas()
-                        .lock()
                         .allocate(&ctx.device(), &ctx.queue(), texture_size)
                 {
                     let mut encoder =

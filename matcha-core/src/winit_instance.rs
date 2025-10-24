@@ -106,6 +106,9 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
 
         self.benchmarker
             .with("gpu_driven_render", || -> Result<(), RenderError> {
+                let color_atlas_texture = self.resource.texture_atlas().texture();
+                let stencil_atlas_texture = self.resource.stencil_atlas().texture();
+
                 self.renderer
                     .render(
                         &device,
@@ -117,8 +120,8 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
                         viewport_size,
                         &object,
                         self.base_color,
-                        &self.resource.texture_atlas().lock().texture(),
-                        &self.resource.stencil_atlas().lock().texture(),
+                        &color_atlas_texture,
+                        &stencil_atlas_texture,
                     )
                     .map_err(RenderError::Render)?;
 

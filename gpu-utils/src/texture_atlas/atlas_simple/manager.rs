@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use log::{debug, trace, warn};
-use parking_lot::Mutex;
 use thiserror::Error;
 
 use super::{AtlasRegion, TextureAtlas, TextureAtlasError};
@@ -22,7 +21,7 @@ pub struct AtlasManager {
     max_size_of_3d_texture: wgpu::Extent3d,
     memory_strategy: MemoryAllocateStrategy,
 
-    atlases: DashMap<wgpu::TextureFormat, Arc<Mutex<TextureAtlas>>>,
+    atlases: DashMap<wgpu::TextureFormat, Arc<TextureAtlas>>,
 }
 
 impl AtlasManager {
@@ -90,7 +89,7 @@ impl AtlasManager {
             return Err(AtlasManagerError::InvalidTextureSize);
         }
 
-        let atlas_entry = self
+        let atlas = self
             .atlases
             .get(&format)
             .ok_or(AtlasManagerError::FormatSetNotFound)?;
@@ -98,8 +97,6 @@ impl AtlasManager {
             "AtlasManager::allocate: allocating {:?} in format {:?}",
             size, format
         );
-        let mut atlas = atlas_entry.lock();
-
         // Try to allocate directly.
         atlas
             .allocate(&self.device, &self.queue, size)
@@ -153,11 +150,11 @@ mod tests {
         }
 
         fn get_atlas_size(&self, format: wgpu::TextureFormat) -> Option<wgpu::Extent3d> {
-            self.atlases.get(&format).map(|atlas| atlas.lock().size())
+            self.atlases.get(&format).map(|atlas| atlas.value().size())
         }
 
         fn get_atlas_usage(&self, format: wgpu::TextureFormat) -> Option<usize> {
-            self.atlases.get(&format).map(|atlas| atlas.lock().usage())
+            self.atlases.get(&format).map(|atlas| atlas.value().usage())
         }
     }
 
