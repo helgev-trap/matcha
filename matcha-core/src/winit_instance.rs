@@ -80,7 +80,6 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
                 self.tokio_runtime.handle(),
                 winit_event_loop,
                 &self.resource,
-                &self.renderer,
                 &mut self.benchmarker,
             ))
         };

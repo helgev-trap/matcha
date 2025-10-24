@@ -32,6 +32,8 @@ image = { workspace = true }
 bitflags = { workspace = true }
 num = { workspace = true }
 
+# log
+env_logger = "^0.11.8"
 
 [lints]
 workspace = true

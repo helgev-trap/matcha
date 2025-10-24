@@ -1,5 +1,6 @@
 use std::{any::Any, sync::Arc};
 
+use log::trace;
 use parking_lot::Mutex;
 use renderer::render_node::RenderNode;
 use smallvec::SmallVec;
@@ -222,6 +223,10 @@ where
             _dom_type: std::marker::PhantomData,
         }
     }
+
+    fn log_label(&self) -> &str {
+        self.label.as_deref().unwrap_or("<unnamed>")
+    }
 }
 
 impl<D, W, T, ChildSetting> AnyWidget<T> for WidgetFrame<D, W, T, ChildSetting>
@@ -235,6 +240,9 @@ where
         let Some(dirty_flags) = &self.dirty_flags else {
             return None;
         };
+
+        let label = self.log_label();
+        trace!("Processing device_input for widget '{}'", label);
 
         let cache = self.cache.lock();
 
@@ -294,6 +302,9 @@ where
             return [0.0, 0.0];
         };
 
+        let label = self.log_label();
+        trace!("Measuring widget '{}'", label);
+
         let mut cache = self.cache.lock();
 
         // clear measure cache if rearrange is needed
@@ -327,6 +338,9 @@ where
         let Some(dirty_flags) = &self.dirty_flags else {
             return Arc::new(RenderNode::new());
         };
+
+        let label = self.log_label();
+        trace!("Rendering widget '{}'", label);
 
         let cache = &mut *self.cache.lock();
 
@@ -397,6 +411,9 @@ where
             .downcast_ref::<D>()
             .ok_or(UpdateWidgetError::TypeMismatch)?;
 
+        let label = self.log_label();
+        trace!("Updating widget tree for widget '{}'", label);
+
         // update current hierarchy widget
         let children = self.widget_impl.update_widget(
             dom,
@@ -433,27 +450,27 @@ where
             let mut old_pair = old_children_map.remove(&id);
 
             // check child identity
-            if let Some((old_child, _)) = &mut old_pair {
-                if old_child.update_widget_tree(child_dom).await.is_err() {
-                    old_pair = None;
-                }
+            if let Some((old_child, _)) = &mut old_pair
+                && old_child.update_widget_tree(child_dom).await.is_err()
+            {
+                old_pair = None;
             }
 
             // check setting identity
-            if let Some((_, old_setting)) = &old_pair {
-                if *old_setting != setting {
-                    // Setting changed.
-                    // CURRENT STRATEGY: treat ANY setting difference as layout-affecting,
-                    // thus trigger full rearrange + redraw.
-                    //
-                    // FUTURE OPTIMIZATION (design note):
-                    // Introduce a SettingImpact classification (layout / redraw-only / none)
-                    // so purely visual changes (e.g. colors) set only redraw, avoiding
-                    // measure/arrange cache invalidation.
-                    // See design memo: "Setting の再配置要否判定 API 抽象".
-                    // Keep simple conservative behavior until profiling justifies refinement.
-                    need_rearrange = true;
-                }
+            if let Some((_, old_setting)) = &old_pair
+                && *old_setting != setting
+            {
+                // Setting changed.
+                // CURRENT STRATEGY: treat ANY setting difference as layout-affecting,
+                // thus trigger full rearrange + redraw.
+                //
+                // FUTURE OPTIMIZATION (design note):
+                // Introduce a SettingImpact classification (layout / redraw-only / none)
+                // so purely visual changes (e.g. colors) set only redraw, avoiding
+                // measure/arrange cache invalidation.
+                // See design memo: "Setting の再配置要否判定 API 抽象".
+                // Keep simple conservative behavior until profiling justifies refinement.
+                need_rearrange = true;
             }
 
             // push to self.children
@@ -478,11 +495,9 @@ where
             need_rearrange = true;
         }
 
-        if need_rearrange {
-            if let Some(dirty_flags) = &self.dirty_flags {
-                dirty_flags.need_rearrange.mark_dirty();
-                dirty_flags.need_redraw.mark_dirty();
-            }
+        if need_rearrange && let Some(dirty_flags) = &self.dirty_flags {
+            dirty_flags.need_rearrange.mark_dirty();
+            dirty_flags.need_redraw.mark_dirty();
         }
 
         Ok(())
@@ -499,6 +514,9 @@ where
         let Some(dirty_flags) = &self.dirty_flags else {
             return;
         };
+
+        let label = self.log_label();
+        trace!("Arranging widget '{}'", label);
 
         let mut cache = self.cache.lock();
 

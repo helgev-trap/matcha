@@ -26,7 +26,7 @@ gpu-utils = { path = "gpu-utils" }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1.88"
 futures = "0.3.31"
-parking_lot = "0.12.3"
+parking_lot = { version = "0.12.3" }
 
 # winit and accessibility
 winit = "0.30"

@@ -192,6 +192,7 @@ impl<E: Send + Sync + 'static> Widget<Text, E, ()> for TextWidget {
 
         if size[0] > 0.0 && size[1] > 0.0 {
             let texture_size = [size[0].ceil() as u32, size[1].ceil() as u32];
+
             if let Ok(style_region) =
                 ctx.texture_atlas()
                     .lock()

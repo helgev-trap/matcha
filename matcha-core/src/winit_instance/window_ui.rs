@@ -150,12 +150,11 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         self.model_update_detecter.is_true() || self.widget.as_ref().is_none_or(|w| w.need_redraw())
     }
 
-    pub async fn render<'a>(
-        &'a mut self,
+    pub async fn render(
+        &mut self,
         tokio_handle: &tokio::runtime::Handle,
         winit_event_loop: &winit::event_loop::ActiveEventLoop,
         resource: &GlobalResources,
-        renderer: &CoreRenderer,
         benchmark: &mut utils::benchmark::Benchmark,
     ) -> Option<RenderResult> {
         trace!("WindowUi::render: begin");
@@ -177,7 +176,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
                         // start window
                         window.start_window(
                             winit_event_loop,
-                            &resource.gpu(),
+                            resource.gpu(),
                         ).expect("failed to start window");
                     })
             }

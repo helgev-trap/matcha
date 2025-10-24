@@ -246,6 +246,7 @@ impl AtlasRegion {
         let Some(atlas) = self.inner.atlas.upgrade() else {
             return Err(RegionError::AtlasGone);
         };
+
         let atlas = atlas.lock();
         let Some(location) = atlas.get_location(self.inner.region_id) else {
             return Err(RegionError::TextureNotFoundInAtlas);
