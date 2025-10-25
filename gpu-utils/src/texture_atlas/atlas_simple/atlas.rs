@@ -319,20 +319,20 @@ struct RegionId {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct RegionLocation {
     page_index: u32,
-    /// The inclusive bounds in pixels within the atlas.
+    /// The bounds in pixels within the atlas (half-open: [min, max) as returned by guillotiere).
     bounds: euclid::Box2D<i32, euclid::UnknownUnit>,
-    /// The inclusive bounding UV coordinates in the atlas.
+    /// The bounding UV coordinates in the atlas (inclusive: computed using max - 1 for vertex mapping).
     uv: euclid::Box2D<f32, euclid::UnknownUnit>,
 }
 
 impl RegionLocation {
     fn new(rec: Box2D<i32, euclid::UnknownUnit>, atlas_size: [u32; 2], page_index: usize) -> Self {
-        // rectangle from guillotiere is half-open, we want inclusive bounds
+        // guillotiere returns rectangles as half-open [min, max). Keep bounds as-is.
+        let bounds = rec;
 
-        let bounds = euclid::Box2D::new(
-            euclid::Point2D::new(rec.min.x, rec.min.y),
-            euclid::Point2D::new(rec.max.x - 1, rec.max.y - 1),
-        );
+        // Normalize the half-open bounds to UV space.
+        // Using bounds.max directly ensures uv.width() == (max - min) / atlas_size,
+        // which matches the expected UV size for allocations.
         let uv = euclid::Box2D::new(
             euclid::Point2D::new(
                 bounds.min.x as f32 / atlas_size[0] as f32,
@@ -748,7 +748,9 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
 
+    /// Sets up a WGPU device and queue for testing.
     async fn setup_wgpu() -> (wgpu::Device, wgpu::Queue) {
+        // todo: change this to use NoopBackend when update wgpu to v25 or later
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()

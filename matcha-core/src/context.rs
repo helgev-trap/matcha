@@ -104,7 +104,7 @@ impl GlobalResources {
         self.current_time.read().elapsed()
     }
 
-    pub fn debug_config(&self) -> RwLockReadGuard<'_, parking_lot::RawRwLock, DebugConfig> {
+    pub(crate) fn debug_config(&self) -> RwLockReadGuard<'_, parking_lot::RawRwLock, DebugConfig> {
         self.debug_config.read()
     }
 
@@ -317,7 +317,7 @@ pub struct ApplicationContext {
 
 /// Commands that can be enqueued from components / handlers.
 /// Extend this enum when new application-level commands are needed.
-pub(crate) enum ApplicationCommand {
+pub enum ApplicationCommand {
     // Define events that the application handler will process
     Quit,
     // future: Custom(Box<dyn FnOnce(&mut AppState) + Send>), etc.

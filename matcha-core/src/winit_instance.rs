@@ -1,6 +1,6 @@
 use log::{debug, error, trace};
 use renderer::{CoreRenderer, core_renderer};
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 use thiserror::Error;
 
 use crate::{
@@ -35,7 +35,7 @@ pub struct WinitInstance<Message: 'static, Event: Send + 'static, B: Backend<Eve
     renderer: CoreRenderer,
 
     // --- backend ---
-    backend: B,
+    backend: Arc<B>,
 
     // --- benchmark / monitoring ---
     benchmarker: utils::benchmark::Benchmark,
@@ -80,7 +80,6 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
                 self.tokio_runtime.handle(),
                 winit_event_loop,
                 &self.resource,
-                &self.renderer,
                 &mut self.benchmarker,
             ))
         };
@@ -324,8 +323,8 @@ pub enum InitError {
 pub enum RenderError {
     #[error("Window not found")]
     WindowNotFound,
-    #[error("Window surface error: {0}")]
-    WindowSurface(&'static str),
+    // #[error("Window surface error: {0}")]
+    // WindowSurface(&'static str),
     #[error(transparent)]
     Surface(#[from] wgpu::SurfaceError),
     #[error(transparent)]

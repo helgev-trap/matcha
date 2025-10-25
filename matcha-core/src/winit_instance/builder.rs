@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use log::{debug, trace};
 
@@ -286,7 +286,7 @@ impl<Message, Event: Send + 'static, B: Backend<Event>> WinitInstanceBuilder<Mes
             windows: vec![window_ui],
             base_color: self.base_color.into(),
             renderer,
-            backend: self.backend,
+            backend: Arc::new(self.backend),
             benchmarker: utils::benchmark::Benchmark::new(120),
             frame: 0,
         })

@@ -433,27 +433,27 @@ where
             let mut old_pair = old_children_map.remove(&id);
 
             // check child identity
-            if let Some((old_child, _)) = &mut old_pair {
-                if old_child.update_widget_tree(child_dom).await.is_err() {
-                    old_pair = None;
-                }
+            if let Some((old_child, _)) = &mut old_pair
+                && old_child.update_widget_tree(child_dom).await.is_err()
+            {
+                old_pair = None;
             }
 
             // check setting identity
-            if let Some((_, old_setting)) = &old_pair {
-                if *old_setting != setting {
-                    // Setting changed.
-                    // CURRENT STRATEGY: treat ANY setting difference as layout-affecting,
-                    // thus trigger full rearrange + redraw.
-                    //
-                    // FUTURE OPTIMIZATION (design note):
-                    // Introduce a SettingImpact classification (layout / redraw-only / none)
-                    // so purely visual changes (e.g. colors) set only redraw, avoiding
-                    // measure/arrange cache invalidation.
-                    // See design memo: "Setting の再配置要否判定 API 抽象".
-                    // Keep simple conservative behavior until profiling justifies refinement.
-                    need_rearrange = true;
-                }
+            if let Some((_, old_setting)) = &old_pair
+                && *old_setting != setting
+            {
+                // Setting changed.
+                // CURRENT STRATEGY: treat ANY setting difference as layout-affecting,
+                // thus trigger full rearrange + redraw.
+                //
+                // FUTURE OPTIMIZATION (design note):
+                // Introduce a SettingImpact classification (layout / redraw-only / none)
+                // so purely visual changes (e.g. colors) set only redraw, avoiding
+                // measure/arrange cache invalidation.
+                // See design memo: "Setting の再配置要否判定 API 抽象".
+                // Keep simple conservative behavior until profiling justifies refinement.
+                need_rearrange = true;
             }
 
             // push to self.children
@@ -478,11 +478,9 @@ where
             need_rearrange = true;
         }
 
-        if need_rearrange {
-            if let Some(dirty_flags) = &self.dirty_flags {
-                dirty_flags.need_rearrange.mark_dirty();
-                dirty_flags.need_redraw.mark_dirty();
-            }
+        if need_rearrange && let Some(dirty_flags) = &self.dirty_flags {
+            dirty_flags.need_rearrange.mark_dirty();
+            dirty_flags.need_redraw.mark_dirty();
         }
 
         Ok(())
@@ -981,7 +979,6 @@ mod tests {
 
     // --- Added Tests ---
 
-    use crate::context::AnyConfig;
     use crate::context::WidgetContext;
     use std::{
         mem::MaybeUninit,
@@ -989,7 +986,6 @@ mod tests {
             Arc,
             atomic::{AtomicUsize, Ordering},
         },
-        time::Duration,
     };
 
     // Helper to create a dummy WidgetContext for tests that don't depend on real GPU resources.

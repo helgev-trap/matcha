@@ -4,7 +4,7 @@ use std::sync::Arc;
 use gpu_utils::gpu::Gpu;
 use log::{debug, trace, warn};
 use parking_lot::RwLock;
-use renderer::{CoreRenderer, RenderNode};
+use renderer::RenderNode;
 use utils::{back_prop_dirty::BackPropDirty, update_flag::UpdateFlag};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 
@@ -27,7 +27,7 @@ pub struct WindowUi<Message: 'static, Event: 'static> {
     // ui
     component: Box<dyn AnyComponent<Message, Event>>,
     widget: Option<Box<dyn AnyWidgetFrame<Event>>>,
-    model_update_detecter: UpdateFlag,
+    model_update_detector: UpdateFlag,
 
     // input handling
     window_state: WindowState,
@@ -63,7 +63,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         Ok(Self {
             window: Arc::new(RwLock::new(WindowSurface::new())),
             component,
-            model_update_detecter: UpdateFlag::new(),
+            model_update_detector: UpdateFlag::new(),
             widget: None,
             window_state: WindowState::default(),
             mouse_state_config,
@@ -147,97 +147,129 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
     /// Render is required when the model update flag or animation update flag is true,
     /// or when the widget is not yet initialized.
     pub fn needs_render(&self) -> bool {
-        self.model_update_detecter.is_true() || self.widget.as_ref().is_none_or(|w| w.need_redraw())
+        self.model_update_detector.is_true() || self.widget.as_ref().is_none_or(|w| w.need_redraw())
     }
 
-    pub async fn render<'a>(
-        &'a mut self,
+    pub async fn render(
+        &mut self,
         tokio_handle: &tokio::runtime::Handle,
         winit_event_loop: &winit::event_loop::ActiveEventLoop,
         resource: &GlobalResources,
-        renderer: &CoreRenderer,
         benchmark: &mut utils::benchmark::Benchmark,
     ) -> Option<RenderResult> {
         trace!("WindowUi::render: begin");
-        let (surface, surface_format, viewport_size) = {
-            let mut window = self.window.upgradable_read();
 
-            // check window existence
-            if window.window().is_none() {
-                trace!("WindowUi::render: window not started, initializing");
-                window.with_upgraded(|window| {
-                        // reset widget and states
-                        self.widget = None;
-                        self.model_update_detecter = UpdateFlag::new();
-                        self.mouse_state = self.mouse_state_config.init().expect(
-                            "already checked mouse state config is valid when WindowUi is created or updated so this should not fail"
-                        );
-                        self.window_state = WindowState::default();
-
-                        // start window
-                        window.start_window(
-                            winit_event_loop,
-                            &resource.gpu(),
-                        ).expect("failed to start window");
-                    })
-            }
-
-            let viewport_size_physical = window.inner_size().expect("we checked window existence");
-            let viewport_size = [
-                viewport_size_physical.width as f32,
-                viewport_size_physical.height as f32,
-            ];
-
-            let surface = match window
-                .current_texture()
-                .expect("we checked window existence")
-            {
-                Ok(texture) => texture,
-                Err(e) => {
-                    warn!("WindowUi::render: failed to get surface texture: {e:?}");
-                    match e {
-                        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
-                            // reconfigure the surface
-                            debug!("WindowUi::render: surface lost, reconfiguring");
-                            window.with_upgraded(|w| {
-                                w.reconfigure_surface(&resource.gpu().device());
-                            });
-
-                            // call rerender event
-                            window.request_redraw();
-
-                            return None;
-                        }
-                        wgpu::SurfaceError::Timeout => {
-                            // skip this frame
-                            warn!("WindowUi::render: surface timeout, skipping frame");
-                            return None;
-                        }
-                        wgpu::SurfaceError::OutOfMemory => {
-                            warn!("WindowUi::render: surface out of memory");
-                            panic!("out of memory");
-                        }
-                        wgpu::SurfaceError::Other => {
-                            warn!("WindowUi::render: surface returned unknown error");
-                            panic!("unknown error at wgpu surface");
-                        }
-                    }
-                }
+        // get surface texture, format, viewport size
+        let (surface, surface_format, viewport_size) =
+            match self.acquire_surface(winit_event_loop, resource) {
+                Some(v) => v,
+                None => return None,
             };
-
-            let surface_format = window.format().expect("we checked window existence");
-
-            (surface, surface_format, viewport_size)
-        };
 
         let surface_texture_view = surface.texture.create_view(&Default::default());
 
         // placeholder background
-        // TODO: consider this.
+        // TODO: use black transparent texture as root background
         let background = Background::new(&surface_texture_view, [0.0, 0.0]);
 
         let ctx = resource.widget_context(tokio_handle, &self.window);
 
+        // Ensure widget tree is initialized or updated
+        self.ensure_widget_ready(benchmark).await;
+
+        // Layout and render
+        let render_node = self.layout_and_render(viewport_size, background, &ctx, benchmark);
+
+        let render_result = RenderResult {
+            render_node,
+            viewport_size,
+            surface_texture: surface,
+            surface_format,
+        };
+
+        trace!("WindowUi::render: completed");
+        Some(render_result)
+    }
+
+    // Acquire surface/format/viewport with all recovery paths encapsulated
+    fn acquire_surface(
+        &mut self,
+        winit_event_loop: &winit::event_loop::ActiveEventLoop,
+        resource: &GlobalResources,
+    ) -> Option<(wgpu::SurfaceTexture, wgpu::TextureFormat, [f32; 2])> {
+        let mut window_guard = self.window.upgradable_read();
+
+        // Ensure window started and reset states
+        if window_guard.window().is_none() {
+            trace!("WindowUi::render: window not started, initializing");
+            window_guard.with_upgraded(|window| {
+                // reset widget and states
+                self.widget = None;
+                self.model_update_detector = UpdateFlag::new();
+                self.mouse_state = self
+                    .mouse_state_config
+                    .init()
+                    .expect("mouse state config was validated at creation/update");
+                self.window_state = WindowState::default();
+
+                // start window
+                window
+                    .start_window(winit_event_loop, resource.gpu())
+                    .expect("failed to start window");
+            });
+        }
+
+        let viewport_size_physical = window_guard
+            .inner_size()
+            .expect("we checked window existence");
+        let viewport_size = [
+            viewport_size_physical.width as f32,
+            viewport_size_physical.height as f32,
+        ];
+
+        let surface = match window_guard
+            .current_texture()
+            .expect("we checked window existence")
+        {
+            Ok(texture) => texture,
+            Err(e) => {
+                warn!("WindowUi::render: failed to get surface texture: {e:?}");
+                match e {
+                    wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+                        // reconfigure the surface
+                        debug!("WindowUi::render: surface lost, reconfiguring");
+                        window_guard.with_upgraded(|w| {
+                            w.reconfigure_surface(&resource.gpu().device());
+                        });
+
+                        // call rerender event
+                        window_guard.request_redraw();
+                        return None;
+                    }
+                    wgpu::SurfaceError::Timeout => {
+                        // skip this frame
+                        warn!("WindowUi::render: surface timeout, skipping frame");
+                        return None;
+                    }
+                    wgpu::SurfaceError::OutOfMemory => {
+                        warn!("WindowUi::render: surface out of memory");
+                        panic!("out of memory");
+                    }
+                    wgpu::SurfaceError::Other => {
+                        warn!("WindowUi::render: surface returned unknown error");
+                        panic!("unknown error at wgpu surface");
+                    }
+                }
+            }
+        };
+
+        let surface_format = window_guard.format().expect("we checked window existence");
+
+        Some((surface, surface_format, viewport_size))
+    }
+
+    // Ensure widget tree is built or updated as needed
+    async fn ensure_widget_ready(&mut self, benchmark: &mut utils::benchmark::Benchmark) {
         if self.widget.is_none() {
             // directly build widget tree from dom
             trace!("WindowUi::render: building widget tree");
@@ -249,13 +281,13 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
                 .insert(benchmark.with("create_widget", || dom.build_widget_tree()));
 
             // set model update notifier
-            self.model_update_detecter = UpdateFlag::new();
+            self.model_update_detector = UpdateFlag::new();
             widget
-                .set_model_update_notifier(&self.model_update_detecter.notifier())
+                .set_model_update_notifier(&self.model_update_detector.notifier())
                 .await;
             // set dirty flags
             widget.update_dirty_flags(BackPropDirty::new(true), BackPropDirty::new(true));
-        } else if self.model_update_detecter.is_true() {
+        } else if self.model_update_detector.is_true() {
             // Widget update is required
             trace!("WindowUi::render: updating widget tree");
             let dom = benchmark
@@ -274,38 +306,36 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
             let widget = self.widget.get_or_insert_with(|| dom.build_widget_tree());
 
             // set model update notifier
-            self.model_update_detecter = UpdateFlag::new();
+            self.model_update_detector = UpdateFlag::new();
             widget
-                .set_model_update_notifier(&self.model_update_detecter.notifier())
+                .set_model_update_notifier(&self.model_update_detector.notifier())
                 .await;
             // set dirty flags
             widget.update_dirty_flags(BackPropDirty::new(true), BackPropDirty::new(true));
         }
+    }
 
+    // Layout pass and render node creation
+    fn layout_and_render(
+        &mut self,
+        viewport_size: [f32; 2],
+        background: Background,
+        ctx: &crate::context::WidgetContext,
+        benchmark: &mut utils::benchmark::Benchmark,
+    ) -> Arc<RenderNode> {
         let widget = self.widget.as_mut().expect("widget initialized above");
 
         let constraints: Constraints =
             Constraints::new([0.0, viewport_size[0]], [0.0, viewport_size[1]]);
 
-        let preferred_size =
-            benchmark.with("layout_measure", || widget.measure(&constraints, &ctx));
+        let preferred_size = benchmark.with("layout_measure", || widget.measure(&constraints, ctx));
         let final_size = [
             preferred_size[0].clamp(0.0, viewport_size[0]),
             preferred_size[1].clamp(0.0, viewport_size[1]),
         ];
 
-        benchmark.with("layout_arrange", || widget.arrange(final_size, &ctx));
-        let render_node = benchmark.with("widget_render", || widget.render(background, &ctx));
-
-        let render_result = RenderResult {
-            render_node,
-            viewport_size,
-            surface_texture: surface,
-            surface_format,
-        };
-
-        trace!("WindowUi::render: completed");
-        Some(render_result)
+        benchmark.with("layout_arrange", || widget.arrange(final_size, ctx));
+        benchmark.with("widget_render", || widget.render(background, ctx))
     }
 
     fn convert_winit_to_window_event(

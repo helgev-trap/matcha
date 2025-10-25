@@ -186,7 +186,7 @@ impl<Model: 'static> Clone for ModelAccessor<Model> {
 }
 
 impl<Model: 'static> ModelAccessor<Model> {
-    pub async fn get_ref(&self) -> RwLockReadGuard<Model> {
+    pub async fn get_ref(&'_ self) -> RwLockReadGuard<'_, Model> {
         self.model.read().await
     }
 
