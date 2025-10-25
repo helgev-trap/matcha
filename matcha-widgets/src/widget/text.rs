@@ -195,7 +195,6 @@ impl<E: Send + Sync + 'static> Widget<Text, E, ()> for TextWidget {
 
             if let Ok(style_region) =
                 ctx.texture_atlas()
-                    .lock()
                     .allocate(&ctx.device(), &ctx.queue(), texture_size)
             {
                 let mut encoder =

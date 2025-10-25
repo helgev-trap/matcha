@@ -87,7 +87,6 @@ impl Buffer {
             // We unwrap here because allocation failure is unexpected in normal operation.
             let atlas_region = ctx
                 .texture_atlas()
-                .lock()
                 .allocate(&ctx.device(), &ctx.queue(), texture_size)
                 .expect("Texture atlas allocation failed for Buffer");
 

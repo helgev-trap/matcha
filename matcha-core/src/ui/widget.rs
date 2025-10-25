@@ -999,7 +999,6 @@ mod tests {
 
     // --- Added Tests ---
 
-    use crate::context::AnyConfig;
     use crate::context::WidgetContext;
     use std::{
         mem::MaybeUninit,
@@ -1007,7 +1006,6 @@ mod tests {
             Arc,
             atomic::{AtomicUsize, Ordering},
         },
-        time::Duration,
     };
 
     // Helper to create a dummy WidgetContext for tests that don't depend on real GPU resources.

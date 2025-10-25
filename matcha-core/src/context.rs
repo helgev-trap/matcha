@@ -3,8 +3,8 @@ use gpu_utils::gpu::Gpu;
 use gpu_utils::gpu_type_map::GpuTypeMap;
 use gpu_utils::texture_atlas::TextureAtlas;
 use log::{debug, trace, warn};
+use parking_lot::RwLock;
 use parking_lot::lock_api::RwLockReadGuard;
-use parking_lot::{Mutex, RwLock};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use utils::type_map::TypeMap;
@@ -14,8 +14,8 @@ use crate::window_surface::WindowSurface;
 
 pub struct GlobalResources {
     gpu: Arc<Gpu>,
-    texture: Arc<Mutex<TextureAtlas>>,
-    stencil: Arc<Mutex<TextureAtlas>>,
+    texture: Arc<TextureAtlas>,
+    stencil: Arc<TextureAtlas>,
     gpu_resource: Arc<GpuTypeMap>,
     any_resource: Arc<TypeMap>,
 
@@ -84,11 +84,11 @@ impl GlobalResources {
         &self.gpu
     }
 
-    pub fn texture_atlas(&self) -> &Mutex<TextureAtlas> {
+    pub fn texture_atlas(&self) -> &TextureAtlas {
         &self.texture
     }
 
-    pub fn stencil_atlas(&self) -> &Mutex<TextureAtlas> {
+    pub fn stencil_atlas(&self) -> &TextureAtlas {
         &self.stencil
     }
 
@@ -104,7 +104,7 @@ impl GlobalResources {
         self.current_time.read().elapsed()
     }
 
-    pub fn debug_config(&self) -> RwLockReadGuard<'_, parking_lot::RawRwLock, DebugConfig> {
+    pub(crate) fn debug_config(&self) -> RwLockReadGuard<'_, parking_lot::RawRwLock, DebugConfig> {
         self.debug_config.read()
     }
 
@@ -177,8 +177,8 @@ pub struct WidgetContext {
 
     // gpu resources
     gpu: Weak<Gpu>,
-    texture_atlas: Weak<Mutex<TextureAtlas>>,
-    stencil_atlas: Weak<Mutex<TextureAtlas>>,
+    texture_atlas: Weak<TextureAtlas>,
+    stencil_atlas: Weak<TextureAtlas>,
     gpu_resource: Weak<GpuTypeMap>,
     any_resource: Weak<TypeMap>,
 
@@ -229,21 +229,21 @@ impl WidgetContext {
 
     /// Returns the texture format for color used by the texture atlas.
     pub fn texture_format(&self) -> wgpu::TextureFormat {
-        self.texture_atlas.upgrade().unwrap().lock().format()
+        self.texture_atlas.upgrade().unwrap().format()
     }
 
     /// Returns a reference to the texture allocator.
-    pub fn texture_atlas(&self) -> Arc<Mutex<TextureAtlas>> {
+    pub fn texture_atlas(&self) -> Arc<TextureAtlas> {
         self.texture_atlas.upgrade().unwrap().clone()
     }
 
     /// Returns the texture format for stencil used by the texture atlas.
     pub fn stencil_format(&self) -> wgpu::TextureFormat {
-        self.stencil_atlas.upgrade().unwrap().lock().format()
+        self.stencil_atlas.upgrade().unwrap().format()
     }
 
     /// Returns a reference to the stencil atlas.
-    pub fn stencil_atlas(&self) -> Arc<Mutex<TextureAtlas>> {
+    pub fn stencil_atlas(&self) -> Arc<TextureAtlas> {
         self.stencil_atlas.upgrade().unwrap().clone()
     }
 
@@ -317,7 +317,7 @@ pub struct ApplicationContext {
 
 /// Commands that can be enqueued from components / handlers.
 /// Extend this enum when new application-level commands are needed.
-pub(crate) enum ApplicationCommand {
+pub enum ApplicationCommand {
     // Define events that the application handler will process
     Quit,
     // future: Custom(Box<dyn FnOnce(&mut AppState) + Send>), etc.

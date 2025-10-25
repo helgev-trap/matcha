@@ -1,6 +1,6 @@
 use log::{debug, error, trace};
 use renderer::{CoreRenderer, core_renderer};
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 use thiserror::Error;
 
 use crate::{
@@ -35,7 +35,7 @@ pub struct WinitInstance<Message: 'static, Event: Send + 'static, B: Backend<Eve
     renderer: CoreRenderer,
 
     // --- backend ---
-    backend: B,
+    backend: Arc<B>,
 
     // --- benchmark / monitoring ---
     benchmarker: utils::benchmark::Benchmark,
@@ -105,6 +105,9 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
 
         self.benchmarker
             .with("gpu_driven_render", || -> Result<(), RenderError> {
+                let color_atlas_texture = self.resource.texture_atlas().texture();
+                let stencil_atlas_texture = self.resource.stencil_atlas().texture();
+
                 self.renderer
                     .render(
                         &device,
@@ -116,8 +119,8 @@ impl<Message: 'static, Event: Send + 'static, B: Backend<Event> + Clone + 'stati
                         viewport_size,
                         &object,
                         self.base_color,
-                        &self.resource.texture_atlas().lock().texture(),
-                        &self.resource.stencil_atlas().lock().texture(),
+                        &color_atlas_texture,
+                        &stencil_atlas_texture,
                     )
                     .map_err(RenderError::Render)?;
 
@@ -320,8 +323,8 @@ pub enum InitError {
 pub enum RenderError {
     #[error("Window not found")]
     WindowNotFound,
-    #[error("Window surface error: {0}")]
-    WindowSurface(&'static str),
+    // #[error("Window surface error: {0}")]
+    // WindowSurface(&'static str),
     #[error(transparent)]
     Surface(#[from] wgpu::SurfaceError),
     #[error(transparent)]
