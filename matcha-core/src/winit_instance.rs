@@ -94,7 +94,7 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
 
     fn new_events(
         &mut self,
-        _: &winit::event_loop::ActiveEventLoop,
+        event_loop: &winit::event_loop::ActiveEventLoop,
         cause: winit::event::StartCause,
     ) {
         // handle some device event which needs continuous polling to detect (e.g. long press)
@@ -102,7 +102,7 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
         // todo
 
         // handle winit instance commands
-        // self.handle_commands(event_loop);
+        self.handle_commands(event_loop);
     }
 
     // MARK: user_event

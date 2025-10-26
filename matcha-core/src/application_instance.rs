@@ -8,7 +8,7 @@ use crate::{
     backend::Backend,
     color::Color,
     context::{ApplicationCommand, GlobalResources},
-    window_ui::{WindowRenderResult, WindowUi},
+    window_ui::WindowUi,
 };
 
 pub struct ApplicationInstance<

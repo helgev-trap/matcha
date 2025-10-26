@@ -42,13 +42,6 @@ pub struct WindowUi<Message: 'static, Event: 'static> {
     keyboard_state: tokio::sync::Mutex<KeyboardState>,
 }
 
-pub struct WindowRenderResult {
-    pub render_node: Arc<RenderNode>,
-    pub viewport_size: [f32; 2],
-    pub surface_texture: wgpu::SurfaceTexture,
-    pub surface_format: wgpu::TextureFormat,
-}
-
 struct SurfaceLock {
     state: AtomicU8,
 }
