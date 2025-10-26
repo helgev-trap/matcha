@@ -45,7 +45,7 @@ impl<T> RwOption<T> {
     ///
     /// The returned guard is a mapped `RwLockReadGuard<&T>` that provides a `&T`.
     /// If the option is `None`, `None` is returned.
-    pub fn get(&self) -> Option<RwOptionReadGuard<T>> {
+    pub fn get(&'_ self) -> Option<RwOptionReadGuard<'_, T>> {
         let g = self.inner.read();
         if g.is_some() {
             let mapped = RwLockReadGuard::map(g, |opt| {
@@ -59,11 +59,11 @@ impl<T> RwOption<T> {
         }
     }
 
-    pub fn get_or_insert(&self, value: T) -> RwOptionReadGuard<T> {
+    pub fn get_or_insert(&'_ self, value: T) -> RwOptionReadGuard<'_, T> {
         self.get_or_insert_with(|| value)
     }
 
-    pub fn get_or_insert_default(&self) -> RwOptionReadGuard<T>
+    pub fn get_or_insert_default(&'_ self) -> RwOptionReadGuard<'_, T>
     where
         T: Default,
     {
@@ -75,7 +75,7 @@ impl<T> RwOption<T> {
     /// Uses double-checked locking: try a read lock first, then take a write lock
     /// to initialize the value if still absent, and finally downgrade the write lock
     /// to a read guard to return `&T`.
-    pub fn get_or_insert_with<F>(&self, f: F) -> RwOptionReadGuard<T>
+    pub fn get_or_insert_with<F>(&'_ self, f: F) -> RwOptionReadGuard<'_, T>
     where
         F: FnOnce() -> T,
     {
@@ -102,7 +102,7 @@ impl<T> RwOption<T> {
     ///
     /// If the initializer returns `Err`, the option is left as `None` and the error
     /// is propagated.
-    pub fn get_or_try_insert_with<E, F>(&self, f: F) -> Result<RwOptionReadGuard<T>, E>
+    pub fn get_or_try_insert_with<E, F>(&'_ self, f: F) -> Result<RwOptionReadGuard<'_, T>, E>
     where
         F: FnOnce() -> Result<T, E>,
     {
@@ -127,7 +127,7 @@ impl<T> RwOption<T> {
     ///
     /// The returned guard allows modifying the inner `T`. If the option is `None`,
     /// `None` is returned.
-    pub fn get_mut(&self) -> Option<RwOptionWriteGuard<T>> {
+    pub fn get_mut(&'_ self) -> Option<RwOptionWriteGuard<'_, T>> {
         let w = self.inner.write();
         if w.is_some() {
             let mapped = RwLockWriteGuard::map(w, |opt| {
@@ -140,11 +140,11 @@ impl<T> RwOption<T> {
         }
     }
 
-    pub fn get_mut_or_insert(&self, value: T) -> RwOptionWriteGuard<T> {
+    pub fn get_mut_or_insert(&'_ self, value: T) -> RwOptionWriteGuard<'_, T> {
         self.get_mut_or_insert_with(|| value)
     }
 
-    pub fn get_mut_or_insert_default(&self) -> RwOptionWriteGuard<T>
+    pub fn get_mut_or_insert_default(&'_ self) -> RwOptionWriteGuard<'_, T>
     where
         T: Default,
     {
@@ -155,7 +155,7 @@ impl<T> RwOption<T> {
     ///
     /// The write lock is held while initialization and the returned guard allows
     /// mutating the stored value.
-    pub fn get_mut_or_insert_with<F>(&self, f: F) -> RwOptionWriteGuard<T>
+    pub fn get_mut_or_insert_with<F>(&'_ self, f: F) -> RwOptionWriteGuard<'_, T>
     where
         F: FnOnce() -> T,
     {
@@ -174,7 +174,7 @@ impl<T> RwOption<T> {
     /// Fallible version: initialize with a function that may return an error, and return a write guard.
     ///
     /// If the initializer returns `Err`, the option is left as `None` and the error is propagated.
-    pub fn get_mut_or_try_insert_with<E, F>(&self, f: F) -> Result<RwOptionWriteGuard<T>, E>
+    pub fn get_mut_or_try_insert_with<E, F>(&'_ self, f: F) -> Result<RwOptionWriteGuard<'_, T>, E>
     where
         F: FnOnce() -> Result<T, E>,
     {

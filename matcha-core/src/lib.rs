@@ -1,8 +1,10 @@
 // application entry point. wrapper of winit_instance.
 pub mod app;
 
-// event loop, window handling and rendering
+mod application_instance;
+mod rendering_loop;
 mod window_surface;
+mod window_ui;
 mod winit_instance;
 
 // widget system

@@ -229,3 +229,10 @@ impl From<[f64; 4]> for Color {
         }
     }
 }
+
+impl Color {
+    pub fn to_wgpu_color(&self) -> wgpu::Color {
+        let [r, g, b, a] = self.to_rgba_f64();
+        wgpu::Color { r, g, b, a }
+    }
+}

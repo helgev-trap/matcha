@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use log::{debug, trace};
 
-use crate::{debug_config::DebugConfig, ui::component::AnyComponent};
+use crate::{debug_config::DebugConfig, ui::component::AnyComponent, window_ui::WindowUi};
 use winit::dpi::PhysicalSize;
 
 use crate::{
@@ -30,7 +30,7 @@ const MOUSE_PRIMARY_BUTTON: MousePrimaryButton = MousePrimaryButton::Left;
 
 // --- Builder ---
 
-pub struct WinitInstanceBuilder<Message, Event: Send, B: Backend<Event>> {
+pub struct WinitInstanceBuilder<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + Sync + 'static> {
     pub(crate) component: Box<dyn AnyComponent<Message, Event>>,
     pub(crate) backend: B,
     pub(crate) runtime_builder: RuntimeBuilder,
@@ -89,7 +89,7 @@ impl RuntimeBuilder {
     }
 }
 
-impl<Message, Event: Send + 'static, B: Backend<Event>> WinitInstanceBuilder<Message, Event, B> {
+impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + Sync + 'static> WinitInstanceBuilder<Message, Event, B> {
     pub fn new(component: impl AnyComponent<Message, Event> + 'static, backend: B) -> Self {
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
         trace!(
@@ -255,7 +255,7 @@ impl<Message, Event: Send + 'static, B: Backend<Event>> WinitInstanceBuilder<Mes
         trace!("WinitInstanceBuilder::build: global resources created");
 
         // 4) Create Window UI and apply builder settings
-        let mut window_ui = super::window_ui::WindowUi::new(
+        let mut window_ui = WindowUi::new(
             self.component,
             crate::device_input::mouse_state::MouseStateConfig {
                 combo_duration: self.double_click_threshold,
@@ -280,15 +280,25 @@ impl<Message, Event: Send + 'static, B: Backend<Event>> WinitInstanceBuilder<Mes
 
         // 6) Build instance (single-window Vec 管理)
         debug!("WinitInstanceBuilder::build: finalizing instance");
-        Ok(WinitInstance {
+
+        // Wrap backend and build ApplicationInstance which owns runtime, resources and windows.
+        let backend = Arc::new(self.backend);
+
+        let app_instance = crate::application_instance::ApplicationInstance::new(
             tokio_runtime,
             resource,
-            windows: vec![window_ui],
-            base_color: self.base_color.into(),
+            vec![window_ui],
+            self.base_color,
             renderer,
-            backend: Arc::new(self.backend),
-            benchmarker: utils::benchmark::Benchmark::new(120),
-            frame: 0,
+            backend,
+        );
+
+        // Prepare a oneshot sender for controlling the render loop lifecycle.
+        let (exit_signal_sender, _exit_signal_receiver) = tokio::sync::oneshot::channel::<()>();
+
+        Ok(WinitInstance {
+            application_instance: app_instance,
+            render_loop_exit_signal: Some(exit_signal_sender),
         })
     }
 }

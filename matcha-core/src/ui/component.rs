@@ -123,7 +123,7 @@ impl<Model: Send + Sync + 'static, Message, Event: 'static, InnerEvent: 'static>
 }
 
 #[async_trait::async_trait]
-pub trait AnyComponent<Message, Event: 'static> {
+pub trait AnyComponent<Message, Event: 'static>: Send + Sync + 'static {
     fn label(&self) -> Option<&str>;
     fn setup(&self, app_ctx: &ApplicationContext);
     fn update(&self, message: &Message, app_ctx: &ApplicationContext);
@@ -131,8 +131,12 @@ pub trait AnyComponent<Message, Event: 'static> {
 }
 
 #[async_trait::async_trait]
-impl<Model: Send + Sync + 'static, Message, Event: 'static, InnerEvent: 'static>
-    AnyComponent<Message, Event> for Component<Model, Message, Event, InnerEvent>
+impl<
+    Model: Send + Sync + 'static,
+    Message: Send + 'static,
+    Event: Send + 'static,
+    InnerEvent: 'static,
+> AnyComponent<Message, Event> for Component<Model, Message, Event, InnerEvent>
 {
     fn label(&self) -> Option<&str> {
         self.label.as_deref()

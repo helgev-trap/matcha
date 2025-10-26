@@ -1,10 +1,14 @@
 use core::panic;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU8, Ordering},
+};
 
 use gpu_utils::gpu::Gpu;
 use log::{debug, trace, warn};
 use parking_lot::RwLock;
-use renderer::RenderNode;
+use renderer::{RenderNode, core_renderer};
+use tokio::task;
 use utils::{back_prop_dirty::BackPropDirty, update_flag::UpdateFlag};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 
@@ -24,23 +28,78 @@ pub struct WindowUi<Message: 'static, Event: 'static> {
     // window
     window: Arc<RwLock<WindowSurface>>,
 
+    surface_guard: SurfaceLock,
+
     // ui
     component: Box<dyn AnyComponent<Message, Event>>,
-    widget: Option<Box<dyn AnyWidgetFrame<Event>>>,
-    model_update_detector: UpdateFlag,
+    widget: tokio::sync::Mutex<Option<Box<dyn AnyWidgetFrame<Event>>>>,
+    model_update_detector: tokio::sync::Mutex<UpdateFlag>,
 
     // input handling
-    window_state: WindowState,
+    window_state: tokio::sync::Mutex<WindowState>,
     mouse_state_config: MouseStateConfig,
-    mouse_state: MouseState,
-    keyboard_state: KeyboardState,
+    mouse_state: tokio::sync::Mutex<MouseState>,
+    keyboard_state: tokio::sync::Mutex<KeyboardState>,
 }
 
-pub struct RenderResult {
+pub struct WindowRenderResult {
     pub render_node: Arc<RenderNode>,
     pub viewport_size: [f32; 2],
     pub surface_texture: wgpu::SurfaceTexture,
     pub surface_format: wgpu::TextureFormat,
+}
+
+struct SurfaceLock {
+    state: AtomicU8,
+}
+
+impl SurfaceLock {
+    const STATE_IDLE: u8 = 0;
+    const STATE_RENDERING: u8 = 1;
+    const STATE_CONFIGURING: u8 = 2;
+
+    fn new() -> Self {
+        Self {
+            state: AtomicU8::new(Self::STATE_IDLE),
+        }
+    }
+
+    async fn lock_for_render(&self) -> SurfaceLockGuard<'_> {
+        self.lock_with_state(Self::STATE_RENDERING).await
+    }
+
+    async fn lock_for_configure(&self) -> SurfaceLockGuard<'_> {
+        self.lock_with_state(Self::STATE_CONFIGURING).await
+    }
+
+    async fn lock_with_state(&self, state: u8) -> SurfaceLockGuard<'_> {
+        loop {
+            if self
+                .state
+                .compare_exchange(Self::STATE_IDLE, state, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                return SurfaceLockGuard { lock: self };
+            }
+
+            std::hint::spin_loop();
+            task::yield_now().await;
+        }
+    }
+
+    fn release(&self) {
+        self.state.store(Self::STATE_IDLE, Ordering::Release);
+    }
+}
+
+struct SurfaceLockGuard<'a> {
+    lock: &'a SurfaceLock,
+}
+
+impl Drop for SurfaceLockGuard<'_> {
+    fn drop(&mut self) {
+        self.lock.release();
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -62,32 +121,38 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         trace!("WindowUi::new: initializing window UI");
         Ok(Self {
             window: Arc::new(RwLock::new(WindowSurface::new())),
+            surface_guard: SurfaceLock::new(),
             component,
-            model_update_detector: UpdateFlag::new(),
-            widget: None,
-            window_state: WindowState::default(),
+            model_update_detector: tokio::sync::Mutex::new(UpdateFlag::new()),
+            widget: tokio::sync::Mutex::new(None),
+            window_state: tokio::sync::Mutex::new(WindowState::default()),
             mouse_state_config,
-            mouse_state: mouse_state_config
-                .init()
-                .ok_or(WindowUiError::InvalidDuration)?,
-            keyboard_state: KeyboardState::new(),
+            mouse_state: tokio::sync::Mutex::new(
+                mouse_state_config
+                    .init()
+                    .ok_or(WindowUiError::InvalidDuration)?,
+            ),
+            keyboard_state: tokio::sync::Mutex::new(KeyboardState::new()),
         })
     }
 
-    pub fn set_mouse_primary_button(&mut self, button: MousePrimaryButton) {
-        self.mouse_state.set_primary_button(button);
+    pub async fn set_mouse_primary_button(&mut self, button: MousePrimaryButton) {
+        self.mouse_state.lock().await.set_primary_button(button);
     }
 
-    pub fn mouse_primary_button(&self) -> MousePrimaryButton {
-        self.mouse_state.primary_button()
+    pub async fn mouse_primary_button(&self) -> MousePrimaryButton {
+        self.mouse_state.lock().await.primary_button()
     }
 
-    pub fn set_scroll_pixel_per_line(&mut self, pixel: f32) {
-        self.mouse_state.set_scroll_pixel_per_line(pixel);
+    pub async fn set_scroll_pixel_per_line(&mut self, pixel: f32) {
+        self.mouse_state
+            .lock()
+            .await
+            .set_scroll_pixel_per_line(pixel);
     }
 
-    pub fn scroll_pixel_per_line(&self) -> f32 {
-        self.mouse_state.scroll_pixel_per_line()
+    pub async fn scroll_pixel_per_line(&self) -> f32 {
+        self.mouse_state.lock().await.scroll_pixel_per_line()
     }
 
     // Window configuration delegation APIs
@@ -111,11 +176,16 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
 }
 
 impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
-    pub fn resize_window(&self, new_size: PhysicalSize<u32>, device: &wgpu::Device) {
+    pub fn window_id(&self) -> Option<winit::window::WindowId> {
+        self.window.read().window_id()
+    }
+
+    pub async fn resize_window(&self, new_size: PhysicalSize<u32>, device: &wgpu::Device) {
         trace!(
             "WindowUi::resize_window: new_size={}x{}",
             new_size.width, new_size.height
         );
+        let _surface_guard = self.surface_guard.lock_for_configure().await;
         self.window.write().set_surface_size(new_size, device);
     }
 
@@ -132,6 +202,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         gpu: &Gpu,
     ) -> Result<(), crate::window_surface::WindowSurfaceError> {
         trace!("WindowUi::start_window: initializing window surface");
+        let _surface_guard = self.surface_guard.lock_for_configure().await;
         self.window.write().start_window(winit_event_loop, gpu)
     }
 
@@ -146,27 +217,38 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
     /// Returns true if a render should be performed.
     /// Render is required when the model update flag or animation update flag is true,
     /// or when the widget is not yet initialized.
-    pub fn needs_render(&self) -> bool {
-        self.model_update_detector.is_true() || self.widget.as_ref().is_none_or(|w| w.need_redraw())
+    pub async fn needs_render(&self) -> bool {
+        self.model_update_detector.lock().await.is_true()
+            || self
+                .widget
+                .lock()
+                .await
+                .as_ref()
+                .is_none_or(|w| w.need_redraw())
     }
 
     pub async fn render(
-        &mut self,
+        &self,
         tokio_handle: &tokio::runtime::Handle,
-        winit_event_loop: &winit::event_loop::ActiveEventLoop,
         resource: &GlobalResources,
+        base_color: &crate::color::Color,
+        core_renderer: &core_renderer::CoreRenderer,
         benchmark: &mut utils::benchmark::Benchmark,
-    ) -> Option<RenderResult> {
+    ) {
         trace!("WindowUi::render: begin");
 
-        // get surface texture, format, viewport size
-        let (surface, surface_format, viewport_size) =
-            match self.acquire_surface(winit_event_loop, resource) {
-                Some(v) => v,
-                None => return None,
-            };
+        let _surface_guard = self.surface_guard.lock_for_render().await;
 
-        let surface_texture_view = surface.texture.create_view(&Default::default());
+        // get surface texture, format, viewport size
+        let (surface_texture, surface_format, viewport_size) = {
+            let mut window_guard = self.window.upgradable_read();
+            match self.acquire_surface(&mut window_guard, resource) {
+                Some(v) => v,
+                None => return,
+            }
+        };
+
+        let surface_texture_view = surface_texture.texture.create_view(&Default::default());
 
         // placeholder background
         // TODO: use black transparent texture as root background
@@ -178,45 +260,39 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         self.ensure_widget_ready(benchmark).await;
 
         // Layout and render
-        let render_node = self.layout_and_render(viewport_size, background, &ctx, benchmark);
+        let render_node = self
+            .layout_and_render(viewport_size, background, &ctx, benchmark)
+            .await;
 
-        let render_result = RenderResult {
-            render_node,
-            viewport_size,
-            surface_texture: surface,
+        let _ = core_renderer.render(
+            &resource.gpu().device(),
+            &resource.gpu().queue(),
             surface_format,
-        };
+            &surface_texture
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default()),
+            viewport_size,
+            &render_node,
+            base_color.to_wgpu_color(),
+            &resource.texture_atlas().texture(),
+            &resource.stencil_atlas().texture(),
+        );
 
-        trace!("WindowUi::render: completed");
-        Some(render_result)
+        surface_texture.present();
+
+        // surface_guard keeps configuration serialized with render duration.
     }
 
     // Acquire surface/format/viewport with all recovery paths encapsulated
     fn acquire_surface(
-        &mut self,
-        winit_event_loop: &winit::event_loop::ActiveEventLoop,
+        &self,
+        window_guard: &mut parking_lot::RwLockUpgradableReadGuard<'_, WindowSurface>,
         resource: &GlobalResources,
     ) -> Option<(wgpu::SurfaceTexture, wgpu::TextureFormat, [f32; 2])> {
-        let mut window_guard = self.window.upgradable_read();
-
-        // Ensure window started and reset states
+        // Ensure window already started; do not create here
         if window_guard.window().is_none() {
-            trace!("WindowUi::render: window not started, initializing");
-            window_guard.with_upgraded(|window| {
-                // reset widget and states
-                self.widget = None;
-                self.model_update_detector = UpdateFlag::new();
-                self.mouse_state = self
-                    .mouse_state_config
-                    .init()
-                    .expect("mouse state config was validated at creation/update");
-                self.window_state = WindowState::default();
-
-                // start window
-                window
-                    .start_window(winit_event_loop, resource.gpu())
-                    .expect("failed to start window");
-            });
+            trace!("WindowUi::render: window not started, skipping render");
+            return None;
         }
 
         let viewport_size_physical = window_guard
@@ -269,46 +345,48 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
     }
 
     // Ensure widget tree is built or updated as needed
-    async fn ensure_widget_ready(&mut self, benchmark: &mut utils::benchmark::Benchmark) {
-        if self.widget.is_none() {
+    async fn ensure_widget_ready(&self, benchmark: &mut utils::benchmark::Benchmark) {
+        let mut widget_lock = self.widget.lock().await;
+        let mut model_update_detector_lock = self.model_update_detector.lock().await;
+
+        if widget_lock.is_none() {
             // directly build widget tree from dom
             trace!("WindowUi::render: building widget tree");
             let dom = benchmark
                 .with_async("create_dom", self.component.view())
                 .await;
-            let widget = self
-                .widget
-                .insert(benchmark.with("create_widget", || dom.build_widget_tree()));
+            let widget =
+                widget_lock.insert(benchmark.with("create_widget", || dom.build_widget_tree()));
 
             // set model update notifier
-            self.model_update_detector = UpdateFlag::new();
+            *model_update_detector_lock = UpdateFlag::new();
             widget
-                .set_model_update_notifier(&self.model_update_detector.notifier())
+                .set_model_update_notifier(&model_update_detector_lock.notifier())
                 .await;
             // set dirty flags
             widget.update_dirty_flags(BackPropDirty::new(true), BackPropDirty::new(true));
-        } else if self.model_update_detector.is_true() {
+        } else if model_update_detector_lock.is_true() {
             // Widget update is required
             trace!("WindowUi::render: updating widget tree");
             let dom = benchmark
                 .with_async("create_dom", self.component.view())
                 .await;
 
-            if let Some(widget) = self.widget.as_mut()
+            if let Some(widget) = widget_lock.as_mut()
                 && benchmark
                     .with_async("update_widget", widget.update_widget_tree(&*dom))
                     .await
                     .is_err()
             {
-                self.widget = None;
+                widget_lock.take();
             }
 
-            let widget = self.widget.get_or_insert_with(|| dom.build_widget_tree());
+            let widget = widget_lock.get_or_insert_with(|| dom.build_widget_tree());
 
             // set model update notifier
-            self.model_update_detector = UpdateFlag::new();
+            *model_update_detector_lock = UpdateFlag::new();
             widget
-                .set_model_update_notifier(&self.model_update_detector.notifier())
+                .set_model_update_notifier(&model_update_detector_lock.notifier())
                 .await;
             // set dirty flags
             widget.update_dirty_flags(BackPropDirty::new(true), BackPropDirty::new(true));
@@ -316,14 +394,16 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
     }
 
     // Layout pass and render node creation
-    fn layout_and_render(
-        &mut self,
+    async fn layout_and_render<'a>(
+        &'a self,
         viewport_size: [f32; 2],
-        background: Background,
+        background: Background<'a>,
         ctx: &crate::context::WidgetContext,
         benchmark: &mut utils::benchmark::Benchmark,
     ) -> Arc<RenderNode> {
-        let widget = self.widget.as_mut().expect("widget initialized above");
+        let mut widget_lock = self.widget.lock().await;
+
+        let widget = widget_lock.as_mut().expect("widget initialized above");
 
         let constraints: Constraints =
             Constraints::new([0.0, viewport_size[0]], [0.0, viewport_size[1]]);
@@ -338,8 +418,8 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         benchmark.with("widget_render", || widget.render(background, ctx))
     }
 
-    fn convert_winit_to_window_event(
-        &mut self,
+    async fn convert_winit_to_window_event(
+        &self,
         window_event: winit::event::WindowEvent,
         get_window_size: impl Fn() -> (PhysicalSize<u32>, PhysicalSize<u32>),
         get_window_position: impl Fn() -> (PhysicalPosition<i32>, PhysicalPosition<i32>),
@@ -357,6 +437,8 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
                 let (inner_size, outer_size) = get_window_size();
                 Some(
                     self.window_state
+                        .lock()
+                        .await
                         .resized(inner_size.into(), outer_size.into()),
                 )
             }
@@ -364,6 +446,8 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
                 let (inner_position, outer_position) = get_window_position();
                 Some(
                     self.window_state
+                        .lock()
+                        .await
                         .moved(inner_position.into(), outer_position.into()),
                 )
             }
@@ -385,28 +469,35 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
             }
 
             // keyboard events
-            winit::event::WindowEvent::KeyboardInput { event, .. } => {
-                self.keyboard_state.keyboard_input(event.clone())
-            }
+            winit::event::WindowEvent::KeyboardInput { event, .. } => self
+                .keyboard_state
+                .lock()
+                .await
+                .keyboard_input(event.clone()),
             winit::event::WindowEvent::ModifiersChanged(modifiers) => {
-                self.keyboard_state.modifiers_changed(modifiers.state());
+                self.keyboard_state
+                    .lock()
+                    .await
+                    .modifiers_changed(modifiers.state());
                 None
             }
             winit::event::WindowEvent::Ime(_) => Some(DeviceInputData::Ime),
 
             // mouse events
             winit::event::WindowEvent::CursorMoved { position, .. } => {
-                Some(self.mouse_state.cursor_moved(*position))
+                Some(self.mouse_state.lock().await.cursor_moved(*position))
             }
             winit::event::WindowEvent::CursorEntered { .. } => {
-                Some(self.mouse_state.cursor_entered())
+                Some(self.mouse_state.lock().await.cursor_entered())
             }
-            winit::event::WindowEvent::CursorLeft { .. } => Some(self.mouse_state.cursor_left()),
+            winit::event::WindowEvent::CursorLeft { .. } => {
+                Some(self.mouse_state.lock().await.cursor_left())
+            }
             winit::event::WindowEvent::MouseWheel { delta, .. } => {
-                Some(self.mouse_state.mouse_wheel(*delta))
+                Some(self.mouse_state.lock().await.mouse_wheel(*delta))
             }
             winit::event::WindowEvent::MouseInput { state, button, .. } => {
-                self.mouse_state.mouse_input(*button, *state)
+                self.mouse_state.lock().await.mouse_input(*button, *state)
             }
 
             // touch events
@@ -419,14 +510,20 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
             | winit::event::WindowEvent::AxisMotion { .. } => Some(DeviceInputData::Touch),
         };
 
-        device_input_data.map(|device_input_data| {
-            let mouse_position = self.mouse_state.position();
-            DeviceInput::new(mouse_position, device_input_data, window_event)
-        })
+        if let Some(device_input_data) = device_input_data {
+            let mouse_position = self.mouse_state.lock().await.position();
+            Some(DeviceInput::new(
+                mouse_position,
+                device_input_data,
+                window_event.clone(),
+            ))
+        } else {
+            None
+        }
     }
 
-    pub fn window_event(
-        &mut self,
+    pub async fn window_event(
+        &self,
         window_event: winit::event::WindowEvent,
         tokio_handle: &tokio::runtime::Handle,
         resource: &GlobalResources,
@@ -463,10 +560,11 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
             )
         };
 
-        let event =
-            self.convert_winit_to_window_event(window_event, get_window_size, get_window_position);
+        let event = self
+            .convert_winit_to_window_event(window_event, get_window_size, get_window_position)
+            .await;
 
-        if let (Some(widget), Some(event)) = (&mut self.widget, event) {
+        if let (Some(widget), Some(event)) = (self.widget.lock().await.as_mut(), event) {
             let result = widget.device_input(&event, &ctx);
             if result.is_some() {
                 trace!("WindowUi::window_event: widget produced event");
@@ -481,11 +579,11 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
     pub fn user_event(
         &self,
         user_event: &Message,
-        tokio_runtime: &tokio::runtime::Handle,
+        tokio_handle: &tokio::runtime::Handle,
         resource: &GlobalResources,
     ) {
         trace!("WindowUi::user_event: forwarding user event");
-        let widget_ctx = &resource.widget_context(tokio_runtime, &self.window);
+        let widget_ctx = &resource.widget_context(tokio_handle, &self.window);
 
         let app_ctx = widget_ctx.application_context();
 

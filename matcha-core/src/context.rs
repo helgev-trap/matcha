@@ -22,7 +22,7 @@ pub struct GlobalResources {
     current_time: Arc<RwLock<std::time::Instant>>,
     debug_config: Arc<RwLock<DebugConfig>>,
 
-    command_receiver: tokio::sync::mpsc::UnboundedReceiver<ApplicationCommand>,
+    command_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<ApplicationCommand>>,
     command_sender: tokio::sync::mpsc::UnboundedSender<ApplicationCommand>,
 }
 
@@ -70,7 +70,7 @@ impl GlobalResources {
             any_resource,
             current_time,
             debug_config,
-            command_receiver: rx,
+            command_receiver: tokio::sync::Mutex::new(rx),
             command_sender: tx,
         };
 
@@ -108,15 +108,21 @@ impl GlobalResources {
         self.debug_config.read()
     }
 
-    pub fn command_receiver(
-        &mut self,
-    ) -> &mut tokio::sync::mpsc::UnboundedReceiver<ApplicationCommand> {
-        &mut self.command_receiver
+    pub fn try_recv_command(
+        &self,
+    ) -> Result<ApplicationCommand, tokio::sync::mpsc::error::TryRecvError> {
+        self.command_receiver.blocking_lock().try_recv()
     }
 
-    pub fn command_sender(&self) -> &tokio::sync::mpsc::UnboundedSender<ApplicationCommand> {
-        &self.command_sender
-    }
+    // pub fn command_receiver(
+    //     &self,
+    // ) -> &tokio::sync::mpsc::UnboundedReceiver<ApplicationCommand> {
+    //     &self.command_receiver
+    // }
+
+    // pub fn command_sender(&self) -> &tokio::sync::mpsc::UnboundedSender<ApplicationCommand> {
+    //     &self.command_sender
+    // }
 }
 
 impl GlobalResources {

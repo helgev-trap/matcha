@@ -22,7 +22,7 @@ where
     Model: Send + Sync + 'static,
     Message: Send + Sync + 'static,
     Event: Send + 'static,
-    B: Backend<Event> + 'static,
+    B: Backend<Event> + Send + Sync + 'static,
 {
     builder: WinitInstanceBuilder<Message, Event, B>,
     // Phantom markers for unused type parameters so the struct keeps them in its
@@ -41,7 +41,7 @@ where
     pub fn new(component: impl AnyComponent<Message, Event> + 'static) -> Self {
         trace!("App::new: creating default app instance");
         Self {
-            builder: WinitInstance::builder(component, ()),
+            builder: WinitInstanceBuilder::new(component, ()),
             _model: std::marker::PhantomData,
             _inner_event: std::marker::PhantomData,
         }
@@ -53,7 +53,7 @@ where
     Model: Send + Sync + 'static,
     Message: Send + Sync + 'static,
     Event: std::fmt::Debug + Send + 'static,
-    B: Backend<Event> + Clone + 'static,
+    B: Backend<Event> + Clone + Send + Sync + 'static,
 {
     pub fn with_backend<NewMessage, NewB>(
         self,
@@ -62,10 +62,10 @@ where
     ) -> App<Model, NewMessage, NewB, Event, InnerEvent>
     where
         NewMessage: Send + Sync + 'static,
-        NewB: Backend<Event> + Clone + 'static,
+        NewB: Backend<Event> + Clone + Send + Sync + 'static,
     {
         debug!("App::with_backend: swapping backend for new type");
-        let mut new_builder = WinitInstance::builder(component, backend);
+        let mut new_builder = WinitInstanceBuilder::new(component, backend);
         // carry over settings
         new_builder.runtime_builder = self.builder.runtime_builder;
         new_builder.title = self.builder.title;

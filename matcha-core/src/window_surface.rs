@@ -22,6 +22,12 @@ pub enum WindowSurface {
     },
 }
 
+impl Default for WindowSurface {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Creation and configuration
 impl WindowSurface {
     pub fn new() -> Self {
@@ -86,8 +92,8 @@ impl WindowSurface {
                 );
                 surface.configure(device, surface_config);
             }
-            WindowSurface::Config { size: s, .. } => {
-                *s = size;
+            _ => {
+                trace!("WindowSurface::set_surface_size: in Config mode, no surface to configure");
             }
         }
     }
@@ -279,6 +285,13 @@ impl WindowSurface {
     pub fn window(&self) -> Option<&Arc<Window>> {
         match self {
             WindowSurface::Window { window, .. } => Some(window),
+            WindowSurface::Config { .. } => None,
+        }
+    }
+
+    pub fn window_id(&self) -> Option<winit::window::WindowId> {
+        match self {
+            WindowSurface::Window { window, .. } => Some(window.id()),
             WindowSurface::Config { .. } => None,
         }
     }
