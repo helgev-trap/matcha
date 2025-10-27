@@ -89,10 +89,10 @@ impl<T: Send + Sync + 'static> Widget<Plain<T>, T, ()> for PlainNode<T> {
         dom: &'a Plain<T>,
         cache_invalidator: Option<InvalidationHandle>,
     ) -> Vec<(&'a dyn Dom<T>, (), u128)> {
-        if self.size != dom.size {
-            if let Some(handle) = cache_invalidator {
-                handle.relayout_next_frame();
-            }
+        if self.size != dom.size
+            && let Some(handle) = cache_invalidator
+        {
+            handle.relayout_next_frame();
         }
         self.style = dom.style.clone();
         self.size = dom.size.clone();
@@ -170,14 +170,10 @@ impl<T: Send + Sync + 'static> Widget<Plain<T>, T, ()> for PlainNode<T> {
         background: Background,
         ctx: &WidgetContext,
     ) -> RenderNode {
+        let (child, _, arrangement) = children[0];
+        let size = arrangement.size;
+
         let mut render_node = RenderNode::new();
-        let children_for_measure: Vec<(&dyn AnyWidget<T>, &())> =
-            children.iter().map(|(c, _, _)| (*c, &())).collect();
-        let size = self.measure(
-            &Constraints::new([0.0f32, f32::INFINITY], [0.0f32, f32::INFINITY]),
-            &children_for_measure,
-            ctx,
-        );
 
         if size[0] > 0.0 && size[1] > 0.0 {
             let texture_size = [size[0].ceil() as u32, size[1].ceil() as u32];
@@ -201,10 +197,8 @@ impl<T: Send + Sync + 'static> Widget<Plain<T>, T, ()> for PlainNode<T> {
             }
         }
 
-        if let Some((child, _, arrangement)) = children.first() {
-            let child_node = child.render(background, ctx);
-            render_node.push_child(child_node, arrangement.affine);
-        }
+        let child_node = child.render(background, ctx);
+        render_node.push_child(child_node, arrangement.affine);
 
         render_node
     }

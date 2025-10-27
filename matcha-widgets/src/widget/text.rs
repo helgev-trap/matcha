@@ -86,7 +86,6 @@ impl<T: Send + Sync + 'static> Dom<T> for Text {
             vec![],
             vec![],
             TextWidget {
-                label: self.label.clone(),
                 clear: crate::style::viewport_clear::ViewportClear {
                     color: matcha_core::color::Color::TRANSPARENT,
                 },
@@ -99,17 +98,16 @@ impl<T: Send + Sync + 'static> Dom<T> for Text {
 // MARK: Widget
 
 pub struct TextWidget {
-    label: Option<String>,
     clear: crate::style::viewport_clear::ViewportClear,
     style: crate::style::text::Text,
 }
 
 impl<E: Send + Sync + 'static> Widget<Text, E, ()> for TextWidget {
-    fn update_widget<'b>(
+    fn update_widget<'a>(
         &mut self,
-        dom: &'b Text,
+        dom: &'a Text,
         cache_invalidator: Option<InvalidationHandle>,
-    ) -> Vec<(&'b dyn Dom<E>, (), u128)> {
+    ) -> Vec<(&'a dyn Dom<E>, (), u128)> {
         // Build a TextDesc like Dom::build_widget_tree does and create a new style
         let text_desc = crate::style::text::TextDesc::new(vec![dom.sentence.clone()])
             .font_size(dom.font_size)
@@ -124,7 +122,6 @@ impl<E: Send + Sync + 'static> Widget<Text, E, ()> for TextWidget {
             handle.relayout_next_frame();
         }
 
-        self.label = dom.label.clone();
         self.style = new_style;
 
         // No children

@@ -1,6 +1,6 @@
 use std::{any::Any, sync::Arc};
 
-use log::trace;
+use log::{trace, warn};
 use parking_lot::Mutex;
 use renderer::render_node::RenderNode;
 use smallvec::SmallVec;
@@ -209,6 +209,11 @@ where
         children_id: Vec<u128>,
         widget_impl: W,
     ) -> Self {
+        log::trace!(
+            "Creating WidgetFrame: {:?}",
+            label.as_deref().unwrap_or("<unnamed>")
+        );
+
         Self {
             label,
             children,
@@ -238,6 +243,10 @@ where
 {
     fn device_input(&mut self, event: &DeviceInput, ctx: &WidgetContext) -> Option<T> {
         let Some(dirty_flags) = &self.dirty_flags else {
+            warn!(
+                "Widget '{}' received device_input before dirty flags were initialized.",
+                self.log_label()
+            );
             return None;
         };
 

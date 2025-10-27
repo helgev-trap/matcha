@@ -249,7 +249,7 @@ impl Style for Text {
         });
 
         let (_, text_area_size) = &*self.text_area_size.get_or_insert_with(&q_size, || {
-            let (w, h) = get_shaped_buffer_size(&buffer);
+            let (w, h) = get_shaped_buffer_size(buffer);
             [w, h]
         });
 
@@ -346,7 +346,7 @@ impl Style for Text {
         // 4) Build TextArea mapped into the target region.
         // Use offset as the top-left position within the target region.
         let text_area = glyphon::TextArea {
-            buffer: &buffer,
+            buffer,
             left: offset[0],
             top: offset[1],
             scale: 1.0,
@@ -367,7 +367,7 @@ impl Style for Text {
                 &ctx.queue(),
                 &mut font_system,
                 &mut text_atlas,
-                &viewport,
+                viewport,
                 [text_area],
                 &mut swash_cache,
             )
@@ -384,7 +384,7 @@ impl Style for Text {
         };
 
         if text_renderer
-            .render(&text_atlas, &viewport, &mut render_pass)
+            .render(&text_atlas, viewport, &mut render_pass)
             .is_err()
         {
             // rendering failed, abort
