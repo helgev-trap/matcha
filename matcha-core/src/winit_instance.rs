@@ -99,7 +99,7 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
     ) {
         // handle some device event which needs continuous polling to detect (e.g. long press)
 
-        // todo
+        self.application_instance.poll_mouse_state();
 
         // handle winit instance commands
         self.handle_commands(event_loop);

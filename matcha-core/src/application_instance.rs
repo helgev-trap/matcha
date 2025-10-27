@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use log::{debug, error, trace};
+use log::{error, trace};
 use renderer::{CoreRenderer, core_renderer};
 use thiserror::Error;
 
@@ -125,6 +125,23 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
             if let Some(event) = event {
                 trace!("ApplicationInstance::window_event: widget produced event, forwarding to backend");
                 self.backend.send_event(event).await;
+            }
+        });
+    }
+
+    pub fn poll_mouse_state(&self) {
+        trace!("ApplicationInstance::poll_mouse_state: polling mouse state");
+        self.tokio_runtime.block_on(async {
+            let windows = self.windows.read().await;
+
+            for window in &*windows {
+                let events = window
+                    .poll_mouse_state(self.tokio_runtime.handle(), &self.global_resources)
+                    .await;
+
+                for event in events {
+                    self.backend.send_event(event).await;
+                }
             }
         });
     }

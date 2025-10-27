@@ -24,7 +24,7 @@ pub use winit::window::Theme;
 pub struct DeviceInput {
     // raw event.
     raw: DeviceInputData,
-    raw_winit: winit::event::WindowEvent,
+    raw_winit: Option<winit::event::WindowEvent>,
     // information to calculate relative mouse position
     mouse_view_port_position: [f32; 2],
     left_multiplied_transform: nalgebra::Matrix4<f32>,
@@ -39,7 +39,7 @@ impl DeviceInput {
     pub(crate) fn new(
         mouse_position: [f32; 2],
         event: DeviceInputData,
-        raw_winit: winit::event::WindowEvent,
+        raw_winit: Option<winit::event::WindowEvent>,
     ) -> Self {
         Self {
             raw: event.clone(),
@@ -81,8 +81,8 @@ impl DeviceInput {
         &self.raw
     }
 
-    pub fn raw_winit(&self) -> &winit::event::WindowEvent {
-        &self.raw_winit
+    pub fn raw_winit(&self) -> Option<&winit::event::WindowEvent> {
+        self.raw_winit.as_ref()
     }
 
     pub fn mouse_view_port_position(&self) -> [f32; 2] {

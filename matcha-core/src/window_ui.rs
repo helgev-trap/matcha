@@ -101,11 +101,6 @@ pub enum WindowUiError {
     InvalidDuration,
 }
 
-pub enum WindowUiRenderError {
-    WindowNotStarted,
-    WgpuSurfaceError(wgpu::SurfaceError),
-}
-
 impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
     pub fn new(
         component: Box<dyn AnyComponent<Message, Event>>,
@@ -508,7 +503,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
             Some(DeviceInput::new(
                 mouse_position,
                 device_input_data,
-                window_event.clone(),
+                Some(window_event),
             ))
         } else {
             None
@@ -567,6 +562,53 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
             trace!("WindowUi::window_event: no widget or no device input");
             None
         }
+    }
+
+    pub async fn poll_mouse_state(
+        &self,
+        tokio_handle: &tokio::runtime::Handle,
+        resource: &GlobalResources,
+    ) -> Vec<Event> {
+        if self.window.read().window().is_none() {
+            trace!("WindowUi::poll_mouse_state: ignoring before window start");
+            return Vec::new();
+        }
+
+        let (mouse_events, mouse_position) = {
+            let mut mouse_state = self.mouse_state.lock().await;
+            (
+                mouse_state.long_pressing_detection(),
+                mouse_state.position(),
+            )
+        };
+
+        if mouse_events.is_empty() {
+            return Vec::new();
+        }
+
+        trace!(
+            "WindowUi::poll_mouse_state: detected {} pending mouse event(s)",
+            mouse_events.len()
+        );
+
+        let ctx = resource.widget_context(tokio_handle, &self.window);
+        let mut widget_lock = self.widget.lock().await;
+        let Some(widget) = widget_lock.as_mut() else {
+            trace!("WindowUi::poll_mouse_state: widget not initialized");
+            return Vec::new();
+        };
+
+        let mut produced_events = Vec::new();
+
+        for device_input_data in mouse_events {
+            let device_input = DeviceInput::new(mouse_position, device_input_data, None);
+
+            if let Some(event) = widget.device_input(&device_input, &ctx) {
+                produced_events.push(event);
+            }
+        }
+
+        produced_events
     }
 
     pub fn user_event(

@@ -30,7 +30,11 @@ const MOUSE_PRIMARY_BUTTON: MousePrimaryButton = MousePrimaryButton::Left;
 
 // --- Builder ---
 
-pub struct WinitInstanceBuilder<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + Sync + 'static> {
+pub struct WinitInstanceBuilder<
+    Message: Send + 'static,
+    Event: Send + 'static,
+    B: Backend<Event> + Send + Sync + 'static,
+> {
     pub(crate) component: Box<dyn AnyComponent<Message, Event>>,
     pub(crate) backend: B,
     pub(crate) runtime_builder: RuntimeBuilder,
@@ -89,7 +93,9 @@ impl RuntimeBuilder {
     }
 }
 
-impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + Sync + 'static> WinitInstanceBuilder<Message, Event, B> {
+impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + Sync + 'static>
+    WinitInstanceBuilder<Message, Event, B>
+{
     pub fn new(component: impl AnyComponent<Message, Event> + 'static, backend: B) -> Self {
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
         trace!(

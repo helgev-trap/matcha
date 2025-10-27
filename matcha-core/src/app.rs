@@ -2,11 +2,8 @@ use crate::ui::component::AnyComponent;
 use log::{debug, trace};
 
 use super::{
-    backend::Backend,
-    color::Color,
-    device_input::mouse_state::MousePrimaryButton,
-    ui::component::Component,
-    winit_instance::{WinitInstance, WinitInstanceBuilder},
+    backend::Backend, color::Color, device_input::mouse_state::MousePrimaryButton,
+    ui::component::Component, winit_instance::WinitInstanceBuilder,
 };
 use std::time::Duration;
 
