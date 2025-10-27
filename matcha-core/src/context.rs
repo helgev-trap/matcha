@@ -130,9 +130,9 @@ impl GlobalResources {
         &self,
         task_executor: &tokio::runtime::Handle,
         window_surface: &Arc<RwLock<WindowSurface>>,
-    ) -> WidgetContext {
+    ) -> Option<WidgetContext> {
         trace!("GlobalResources::widget_context: creating widget context");
-        WidgetContext {
+        Some(WidgetContext {
             task_executor: task_executor.clone(),
             window_surface: Arc::downgrade(window_surface),
             current_time: Arc::downgrade(&self.current_time),
@@ -143,23 +143,25 @@ impl GlobalResources {
             gpu_resource: Arc::downgrade(&self.gpu_resource),
             any_resource: Arc::downgrade(&self.any_resource),
             scoped_config: AnyConfig::new(),
+            window_id: window_surface.read().window_id()?,
             command_sender: self.command_sender.downgrade(),
-        }
+        })
     }
 
     pub fn application_context(
         &self,
         task_executor: &tokio::runtime::Handle,
         window_surface: &Arc<RwLock<WindowSurface>>,
-    ) -> ApplicationContext {
+    ) -> Option<ApplicationContext> {
         trace!("GlobalResources::application_context: creating application context");
-        ApplicationContext {
+        Some(ApplicationContext {
             task_executor: task_executor.clone(),
             window_surface: Arc::downgrade(window_surface),
             debug_config: Arc::downgrade(&self.debug_config),
             current_time: Arc::downgrade(&self.current_time),
+            window_id: window_surface.read().window_id()?,
             command_sender: self.command_sender.downgrade(),
-        }
+        })
     }
 }
 
@@ -191,6 +193,9 @@ pub struct WidgetContext {
     // nested config
     scoped_config: AnyConfig,
 
+    // current window id
+    window_id: winit::window::WindowId,
+
     // commands (for create application context)
     command_sender: tokio::sync::mpsc::WeakUnboundedSender<ApplicationCommand>,
 }
@@ -205,6 +210,7 @@ impl WidgetContext {
             window_surface: self.window_surface.clone(),
             debug_config: self.debug_config.clone(),
             current_time: self.current_time.clone(),
+            window_id: self.window_id,
             command_sender: self.command_sender.clone(),
         }
     }
@@ -318,28 +324,43 @@ pub struct ApplicationContext {
     // todo: replace this by `Ticker`
     current_time: Weak<RwLock<std::time::Instant>>,
 
+    window_id: winit::window::WindowId,
+
     command_sender: tokio::sync::mpsc::WeakUnboundedSender<ApplicationCommand>,
 }
 
 /// Commands that can be enqueued from components / handlers.
 /// Extend this enum when new application-level commands are needed.
 pub enum ApplicationCommand {
-    // Define events that the application handler will process
-    Quit,
+    /// Signal the application to exit.
+    Exit,
+    /// Close window with given ID.
+    CloseWindow { id: winit::window::WindowId },
     // future: Custom(Box<dyn FnOnce(&mut AppState) + Send>), etc.
 }
 
 impl ApplicationContext {
-    /// Enqueue a Quit command.
-    pub fn quit(&self) {
+    /// Enqueue a Exit command.
+    /// This will signal the entire application to exit gracefully.
+    pub fn exit(&self) {
         if let Some(sender) = self.command_sender.upgrade() {
-            if sender.send(ApplicationCommand::Quit).is_err() {
-                warn!("ApplicationContext::quit: receiver dropped before handling quit");
+            if sender.send(ApplicationCommand::Exit).is_err() {
+                warn!("ApplicationContext::exit: receiver dropped before handling exit command");
             } else {
-                trace!("ApplicationContext::quit: quit command sent");
+                trace!("ApplicationContext::exit: exit command sent");
             }
         } else {
-            warn!("ApplicationContext::quit: command sender unavailable");
+            warn!("ApplicationContext::exit: command sender unavailable");
+        }
+    }
+
+    pub fn close_current_window(&self) {
+        if let Some(sender) = self.command_sender.upgrade()
+            && let Ok(_) = sender.send(ApplicationCommand::CloseWindow { id: self.window_id })
+        {
+            trace!("ApplicationContext::close_current_window: close window command sent");
+        } else {
+            warn!("ApplicationContext::close_current_window: command sender unavailable");
         }
     }
 
@@ -483,6 +504,7 @@ impl WidgetContext {
             gpu_resource: gpu_resource_weak,
             any_resource: any_resource_weak,
             scoped_config: AnyConfig::new(),
+            window_id: winit::window::WindowId::dummy(),
             command_sender: command_sender_weak,
         }
     }

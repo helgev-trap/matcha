@@ -1,6 +1,4 @@
-use log::{debug, error, trace};
 use std::{fmt::Debug, sync::Arc};
-use thiserror::Error;
 
 use crate::{
     application_instance::ApplicationInstance,
@@ -42,15 +40,21 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
     WinitInstance<Message, Event, B>
 {
     fn handle_commands(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        trace!("WinitInstance::handle_commands: draining command queue");
+        log::trace!("WinitInstance::handle_commands: draining command queue");
         while let Ok(command) = self.application_instance.try_recv_command() {
             match command {
-                ApplicationCommand::Quit => {
-                    debug!("WinitInstance::handle_commands: received quit command");
+                ApplicationCommand::Exit => {
+                    log::info!("WinitInstance::handle_commands: received quit command");
                     self.render_loop_exit_signal
                         .take()
                         .map(|sender| sender.send(()).ok());
                     event_loop.exit();
+                }
+                ApplicationCommand::CloseWindow { id } => {
+                    log::info!(
+                        "WinitInstance::handle_commands: received close window command for window id={id:?}"
+                    );
+                    self.application_instance.close_window(id);
                 }
             }
         }
@@ -119,7 +123,7 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
         device_id: winit::event::DeviceId,
         event: winit::event::DeviceEvent,
     ) {
-        trace!(
+        log::trace!(
             "WinitInstance::device_event: device_id={device_id:?} event={:?}",
             event
         );
@@ -127,27 +131,27 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
     }
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        trace!("WinitInstance::about_to_wait");
+        log::trace!("WinitInstance::about_to_wait");
         let _ = event_loop;
     }
 
     fn suspended(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        trace!("WinitInstance::suspended");
+        log::trace!("WinitInstance::suspended");
         let _ = event_loop;
     }
 
     fn exiting(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        debug!("WinitInstance::exiting");
+        log::debug!("WinitInstance::exiting");
         let _ = event_loop;
     }
 
     fn memory_warning(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        trace!("WinitInstance::memory_warning");
+        log::trace!("WinitInstance::memory_warning");
         let _ = event_loop;
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum InitError {
     #[error("Failed to initialize tokio runtime")]
     TokioRuntime,

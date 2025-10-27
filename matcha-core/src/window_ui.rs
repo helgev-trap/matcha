@@ -198,8 +198,9 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
     // TODO: This is provisional implementation. Refactor this after organizing async execution flow.
     pub async fn setup(&self, tokio_handle: &tokio::runtime::Handle, resource: &GlobalResources) {
         trace!("WindowUi::setup: invoking component setup");
-        self.component
-            .setup(&resource.application_context(tokio_handle, &self.window))
+        if let Some(ctx) = resource.application_context(tokio_handle, &self.window) {
+            self.component.setup(&ctx);
+        }
     }
 
     /// Returns true if a render should be performed.
@@ -242,7 +243,10 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         // TODO: use black transparent texture as root background
         let background = Background::new(&surface_texture_view, [0.0, 0.0]);
 
-        let ctx = resource.widget_context(tokio_handle, &self.window);
+        let Some(ctx) = resource.widget_context(tokio_handle, &self.window) else {
+            trace!("WindowUi::render: widget context not available, skipping render");
+            return;
+        };
 
         // Ensure widget tree is initialized or updated
         self.ensure_widget_ready(benchmark).await;
@@ -523,7 +527,10 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         }
 
         trace!("WindowUi::window_event: received {window_event:?}");
-        let ctx = resource.widget_context(tokio_handle, &self.window);
+        let Some(ctx) = resource.widget_context(tokio_handle, &self.window) else {
+            trace!("WindowUi::window_event: widget context not available, skipping event");
+            return None;
+        };
 
         let window_clone = self.window.clone();
         let get_window_size = || {
@@ -591,7 +598,10 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
             mouse_events.len()
         );
 
-        let ctx = resource.widget_context(tokio_handle, &self.window);
+        let Some(ctx) = resource.widget_context(tokio_handle, &self.window) else {
+            trace!("WindowUi::poll_mouse_state: widget context not available, skipping event");
+            return Vec::new();
+        };
         let mut widget_lock = self.widget.lock().await;
         let Some(widget) = widget_lock.as_mut() else {
             trace!("WindowUi::poll_mouse_state: widget not initialized");
@@ -618,9 +628,10 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         resource: &GlobalResources,
     ) {
         trace!("WindowUi::user_event: forwarding user event");
-        let widget_ctx = &resource.widget_context(tokio_handle, &self.window);
-
-        let app_ctx = widget_ctx.application_context();
+        let Some(app_ctx) = resource.application_context(tokio_handle, &self.window) else {
+            trace!("WindowUi::user_event: application context not available, skipping event");
+            return;
+        };
 
         self.component.update(user_event, &app_ctx);
     }

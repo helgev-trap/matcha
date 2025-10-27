@@ -29,7 +29,7 @@ fn default_input_function<Model: Send + Sync + 'static>(
     app_handler: &ApplicationContext,
 ) {
     if input.event() == &crate::device_input::DeviceInputData::CloseRequested {
-        app_handler.quit();
+        app_handler.exit();
     }
 }
 
