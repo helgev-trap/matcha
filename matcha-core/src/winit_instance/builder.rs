@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use log::{debug, trace};
 
-use crate::{debug_config::DebugConfig, ui::component::AnyComponent, window_ui::WindowUi};
+use crate::{debug_config::DebugConfig, ui::component::AnyComponent, window_ui::WindowUiConfig};
 use winit::dpi::PhysicalSize;
 
 use crate::{
@@ -261,7 +261,7 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
         trace!("WinitInstanceBuilder::build: global resources created");
 
         // 4) Create Window UI and apply builder settings
-        let mut window_ui = WindowUi::new(
+        let mut window_ui = WindowUiConfig::new(
             self.component,
             crate::device_input::mouse_state::MouseStateConfig {
                 combo_duration: self.double_click_threshold,

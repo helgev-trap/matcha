@@ -32,7 +32,7 @@ impl GlobalResources {
             "GlobalResources::new: initializing with max_texture_dimension_2d={}",
             gpu.limits().max_texture_dimension_2d
         );
-        let max_size_2d = gpu.limits().max_texture_dimension_2d as u32;
+        let max_size_2d = gpu.limits().max_texture_dimension_2d;
         let texture = TextureAtlas::new(
             &gpu.device(),
             wgpu::Extent3d {
@@ -143,7 +143,7 @@ impl GlobalResources {
             gpu_resource: Arc::downgrade(&self.gpu_resource),
             any_resource: Arc::downgrade(&self.any_resource),
             scoped_config: AnyConfig::new(),
-            window_id: window_surface.read().window_id()?,
+            window_id: window_surface.read().window_id(),
             command_sender: self.command_sender.downgrade(),
         })
     }
@@ -159,7 +159,7 @@ impl GlobalResources {
             window_surface: Arc::downgrade(window_surface),
             debug_config: Arc::downgrade(&self.debug_config),
             current_time: Arc::downgrade(&self.current_time),
-            window_id: window_surface.read().window_id()?,
+            window_id: window_surface.read().window_id(),
             command_sender: self.command_sender.downgrade(),
         })
     }
@@ -236,7 +236,9 @@ impl WidgetContext {
 
     /// Returns the texture format of the surface.
     pub fn surface_format(&self) -> Option<wgpu::TextureFormat> {
-        self.window_surface.upgrade().unwrap().read().format()
+        self.window_surface
+            .upgrade()
+            .map(|surface| surface.read().format())
     }
 
     /// Returns the texture format for color used by the texture atlas.
@@ -261,17 +263,17 @@ impl WidgetContext {
 
     /// Returns the DPI scaling factor of the window.
     pub fn dpi(&self) -> Option<f64> {
-        self.window_surface.upgrade().unwrap().read().dpi()
+        self.window_surface
+            .upgrade()
+            .map(|surface| surface.read().dpi())
     }
 
     /// Returns the logical size of the viewport.
     pub fn viewport_size(&self) -> Option<[f32; 2]> {
-        self.window_surface
-            .upgrade()
-            .unwrap()
-            .read()
-            .inner_size()
-            .map(|s| [s.width as f32, s.height as f32])
+        self.window_surface.upgrade().map(|surface| {
+            let size = surface.read().inner_size();
+            [size.width as f32, size.height as f32]
+        })
     }
 
     /// Returns the current absolute time since the application started.
@@ -465,12 +467,9 @@ impl WidgetContext {
             }
         };
 
-        // create temporary strong owners for window_surface, debug_config and current_time
-        let window_surface =
-            StdArc::new(PLRwLock::new(crate::window_surface::WindowSurface::new()));
-        let window_surface_weak = StdArc::downgrade(&window_surface);
-        // keep a leaked strong owner so the Weak stays valid for the test lifetime
-        Box::leak(Box::new(window_surface));
+        // window surface is not available in tests; use an empty Weak reference
+        let window_surface_weak: std::sync::Weak<PLRwLock<crate::window_surface::WindowSurface>> =
+            std::sync::Weak::new();
 
         let debug_cfg = StdArc::new(PLRwLock::new(crate::debug_config::DebugConfig::default()));
         let debug_cfg_weak = StdArc::downgrade(&debug_cfg);

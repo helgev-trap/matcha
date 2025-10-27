@@ -87,7 +87,7 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
 
     fn window_event(
         &mut self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
         window_id: winit::window::WindowId,
         event: winit::event::WindowEvent,
     ) {
@@ -99,7 +99,7 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
     fn new_events(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
-        cause: winit::event::StartCause,
+        _cause: winit::event::StartCause,
     ) {
         // handle some device event which needs continuous polling to detect (e.g. long press)
 
@@ -111,7 +111,7 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
 
     // MARK: user_event
 
-    fn user_event(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, event: Message) {
+    fn user_event(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop, event: Message) {
         self.application_instance.user_event(event);
     }
 

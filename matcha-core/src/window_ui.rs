@@ -21,11 +21,25 @@ use crate::{
     },
     metrics::Constraints,
     ui::{AnyWidgetFrame, Background, component::AnyComponent},
-    window_surface::WindowSurface,
+    window_surface::{WindowSurface, WindowSurfaceConfig},
 };
 
+pub struct WindowUiConfig<Message: 'static, Event: 'static> {
+    window: WindowSurfaceConfig,
+
+    surface_guard: SurfaceLock,
+
+    component: Box<dyn AnyComponent<Message, Event>>,
+    widget: tokio::sync::Mutex<Option<Box<dyn AnyWidgetFrame<Event>>>>,
+    model_update_detector: tokio::sync::Mutex<UpdateFlag>,
+
+    window_state: tokio::sync::Mutex<WindowState>,
+    mouse_state_config: MouseStateConfig,
+    mouse_state: tokio::sync::Mutex<MouseState>,
+    keyboard_state: tokio::sync::Mutex<KeyboardState>,
+}
+
 pub struct WindowUi<Message: 'static, Event: 'static> {
-    // window
     window: Arc<RwLock<WindowSurface>>,
 
     surface_guard: SurfaceLock,
@@ -101,14 +115,14 @@ pub enum WindowUiError {
     InvalidDuration,
 }
 
-impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
+impl<Message: 'static, Event: 'static> WindowUiConfig<Message, Event> {
     pub fn new(
         component: Box<dyn AnyComponent<Message, Event>>,
         mouse_state_config: MouseStateConfig,
     ) -> Result<Self, WindowUiError> {
         trace!("WindowUi::new: initializing window UI");
         Ok(Self {
-            window: Arc::new(RwLock::new(WindowSurface::new())),
+            window: WindowSurfaceConfig::new(),
             surface_guard: SurfaceLock::new(),
             component,
             model_update_detector: tokio::sync::Mutex::new(UpdateFlag::new()),
@@ -145,26 +159,115 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
 
     // Window configuration delegation APIs
     pub fn set_title(&mut self, title: &str) {
-        self.window.write().set_title(title);
+        self.window.set_title(title);
     }
 
     pub fn init_size(&mut self, width: u32, height: u32) {
         self.window
-            .write()
             .request_inner_size(PhysicalSize::new(width, height));
     }
 
     pub fn set_maximized(&mut self, maximized: bool) {
-        self.window.write().set_maximized(maximized);
+        self.window.set_maximized(maximized);
     }
 
     pub fn set_fullscreen(&mut self, fullscreen: bool) {
-        self.window.write().set_fullscreen(fullscreen);
+        self.window.set_fullscreen(fullscreen);
+    }
+
+    pub async fn start_window(
+        self,
+        winit_event_loop: &winit::event_loop::ActiveEventLoop,
+        gpu: &Gpu,
+    ) -> Result<WindowUi<Message, Event>, (Self, crate::window_surface::WindowSurfaceError)> {
+        trace!("WindowUiConfig::start_window: initializing window surface");
+
+        let Self {
+            window,
+            surface_guard,
+            component,
+            widget,
+            model_update_detector,
+            window_state,
+            mouse_state_config,
+            mouse_state,
+            keyboard_state,
+        } = self;
+
+        let start_result = {
+            let _surface_guard = surface_guard.lock_for_configure().await;
+            window.start_window(winit_event_loop, gpu)
+        };
+
+        match start_result {
+            Ok(window_surface) => Ok(WindowUi {
+                window: Arc::new(RwLock::new(window_surface)),
+                surface_guard,
+                component,
+                widget,
+                model_update_detector,
+                window_state,
+                mouse_state_config,
+                mouse_state,
+                keyboard_state,
+            }),
+            Err(err) => Err((
+                WindowUiConfig {
+                    window,
+                    surface_guard,
+                    component,
+                    widget,
+                    model_update_detector,
+                    window_state,
+                    mouse_state_config,
+                    mouse_state,
+                    keyboard_state,
+                },
+                err,
+            )),
+        }
     }
 }
 
 impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
-    pub fn window_id(&self) -> Option<winit::window::WindowId> {
+    pub async fn set_mouse_primary_button(&self, button: MousePrimaryButton) {
+        self.mouse_state.lock().await.set_primary_button(button);
+    }
+
+    pub async fn mouse_primary_button(&self) -> MousePrimaryButton {
+        self.mouse_state.lock().await.primary_button()
+    }
+
+    pub async fn set_scroll_pixel_per_line(&self, pixel: f32) {
+        self.mouse_state
+            .lock()
+            .await
+            .set_scroll_pixel_per_line(pixel);
+    }
+
+    pub async fn scroll_pixel_per_line(&self) -> f32 {
+        self.mouse_state.lock().await.scroll_pixel_per_line()
+    }
+
+    pub fn set_title(&self, title: &str) {
+        self.window.read().set_title(title);
+    }
+
+    pub fn request_inner_size(&self, width: u32, height: u32) {
+        self.window
+            .read()
+            .request_inner_size(PhysicalSize::new(width, height));
+    }
+
+    pub fn set_maximized(&self, maximized: bool) {
+        self.window.read().set_maximized(maximized);
+    }
+
+    pub fn set_fullscreen(&self, fullscreen: bool) {
+        self.window.read().set_fullscreen(fullscreen);
+    }
+
+    pub fn window_id(&self) -> winit::window::WindowId {
         self.window.read().window_id()
     }
 
@@ -182,18 +285,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         self.window.read().request_redraw();
     }
 }
-
 impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
-    pub async fn start_window(
-        &self,
-        winit_event_loop: &winit::event_loop::ActiveEventLoop,
-        gpu: &Gpu,
-    ) -> Result<(), crate::window_surface::WindowSurfaceError> {
-        trace!("WindowUi::start_window: initializing window surface");
-        let _surface_guard = self.surface_guard.lock_for_configure().await;
-        self.window.write().start_window(winit_event_loop, gpu)
-    }
-
     // start component setup function
     // TODO: This is provisional implementation. Refactor this after organizing async execution flow.
     pub async fn setup(&self, tokio_handle: &tokio::runtime::Handle, resource: &GlobalResources) {
@@ -281,24 +373,13 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         window_guard: &mut parking_lot::RwLockUpgradableReadGuard<'_, WindowSurface>,
         resource: &GlobalResources,
     ) -> Option<(wgpu::SurfaceTexture, wgpu::TextureFormat, [f32; 2])> {
-        // Ensure window already started; do not create here
-        if window_guard.window().is_none() {
-            trace!("WindowUi::render: window not started, skipping render");
-            return None;
-        }
-
-        let viewport_size_physical = window_guard
-            .inner_size()
-            .expect("we checked window existence");
+        let viewport_size_physical = window_guard.inner_size();
         let viewport_size = [
             viewport_size_physical.width as f32,
             viewport_size_physical.height as f32,
         ];
 
-        let surface = match window_guard
-            .current_texture()
-            .expect("we checked window existence")
-        {
+        let surface = match window_guard.current_texture() {
             Ok(texture) => texture,
             Err(e) => {
                 warn!("WindowUi::render: failed to get surface texture: {e:?}");
@@ -331,7 +412,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
             }
         };
 
-        let surface_format = window_guard.format().expect("we checked window existence");
+        let surface_format = window_guard.format();
 
         Some((surface, surface_format, viewport_size))
     }
@@ -414,7 +495,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         &self,
         window_event: winit::event::WindowEvent,
         get_window_size: impl Fn() -> (PhysicalSize<u32>, PhysicalSize<u32>),
-        get_window_position: impl Fn() -> (PhysicalPosition<i32>, PhysicalPosition<i32>),
+        get_window_position: impl Fn() -> Option<(PhysicalPosition<i32>, PhysicalPosition<i32>)>,
     ) -> Option<DeviceInput> {
         let device_input_data = match &window_event {
             // we don't handle these events here
@@ -435,7 +516,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
                 )
             }
             winit::event::WindowEvent::Moved(_) => {
-                let (inner_position, outer_position) = get_window_position();
+                let (inner_position, outer_position) = get_window_position()?;
                 Some(
                     self.window_state
                         .lock()
@@ -520,12 +601,6 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         tokio_handle: &tokio::runtime::Handle,
         resource: &GlobalResources,
     ) -> Option<Event> {
-        // check window existence
-        if self.window.read().window().is_none() {
-            trace!("WindowUi::window_event: ignoring event before window start");
-            return None;
-        }
-
         trace!("WindowUi::window_event: received {window_event:?}");
         let Some(ctx) = resource.widget_context(tokio_handle, &self.window) else {
             trace!("WindowUi::window_event: widget context not available, skipping event");
@@ -535,24 +610,18 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         let window_clone = self.window.clone();
         let get_window_size = || {
             let window = window_clone.read();
-            (
-                window.inner_size().expect("we checked window existence"),
-                window.outer_size().expect("we checked window existence"),
-            )
+            (window.inner_size(), window.outer_size())
         };
         let window_clone = self.window.clone();
         let get_window_position = || {
             let window = window_clone.read();
-            (
-                window
-                    .inner_position()
-                    .expect("we checked window existence")
-                    .expect("window should be there and when Android / Wayland window moving event should not be called"),
-                window
-                    .outer_position()
-                    .expect("we checked window existence")
-                    .expect("window should be there and when Android / Wayland window moving event should not be called"),
-            )
+            match (window.inner_position(), window.outer_position()) {
+                (Ok(inner), Ok(outer)) => Some((inner, outer)),
+                (Err(err), _) | (_, Err(err)) => {
+                    warn!("WindowUi::window_event: failed to get window position: {err:?}");
+                    None
+                }
+            }
         };
 
         let event = self
@@ -576,11 +645,6 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         tokio_handle: &tokio::runtime::Handle,
         resource: &GlobalResources,
     ) -> Vec<Event> {
-        if self.window.read().window().is_none() {
-            trace!("WindowUi::poll_mouse_state: ignoring before window start");
-            return Vec::new();
-        }
-
         let (mouse_events, mouse_position) = {
             let mut mouse_state = self.mouse_state.lock().await;
             (
