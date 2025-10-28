@@ -8,6 +8,7 @@ members = [
     "utils",
     "gpu-utils",
 ]
+workspace.resolver = "3" 
 
 [workspace.package]
 version = "0.0.5"

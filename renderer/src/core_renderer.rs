@@ -2,7 +2,7 @@ use log::{debug, trace, warn};
 use std::sync::Arc;
 
 use crate::render_node::RenderNode;
-use gpu_utils::texture_atlas;
+use gpu_utils::{device_loss_recoverable::DeviceLossRecoverable, texture_atlas};
 use texture_atlas::RegionError;
 use thiserror::Error;
 
@@ -111,6 +111,63 @@ struct CullingPushConstants {
 }
 
 pub struct CoreRenderer {
+    inner: parking_lot::RwLock<CoreRendererInner>,
+}
+
+impl CoreRenderer {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let inner = CoreRendererInner::new(device);
+        Self {
+            inner: parking_lot::RwLock::new(inner),
+        }
+    }
+}
+
+impl DeviceLossRecoverable for CoreRenderer {
+    fn recover(&self, device: &wgpu::Device, _: &wgpu::Queue) {
+        debug!("CoreRenderer::recover: recovering GPU resources");
+        let new_inner = CoreRendererInner::new(device);
+        let mut inner_lock = self.inner.write();
+        *inner_lock = new_inner;
+        debug!("CoreRenderer::recover: recovery complete");
+    }
+}
+
+impl CoreRenderer {
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        &self,
+        // gpu
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        // surface format
+        surface_format: wgpu::TextureFormat,
+        // destination
+        destination_view: &wgpu::TextureView,
+        destination_size: [f32; 2],
+        // objects
+        render_node: &RenderNode,
+        load_color: wgpu::Color,
+        // texture atlas
+        texture_atlas: &wgpu::Texture,
+        stencil_atlas: &wgpu::Texture,
+    ) -> Result<(), TextureValidationError> {
+        let inner_lock = self.inner.read();
+        inner_lock.render(
+            device,
+            queue,
+            surface_format,
+            destination_view,
+            destination_size,
+            render_node,
+            load_color,
+            texture_atlas,
+            stencil_atlas,
+        )
+    }
+}
+
+pub struct CoreRendererInner {
     // Bind Group Layouts
     texture_sampler: wgpu::Sampler,
     texture_bind_group_layout: wgpu::BindGroupLayout,
@@ -134,7 +191,7 @@ pub struct CoreRenderer {
     draw_command_storage: wgpu::Buffer,
 }
 
-impl CoreRenderer {
+impl CoreRendererInner {
     pub fn new(device: &wgpu::Device) -> Self {
         debug!("CoreRenderer::new: initializing renderer");
         // Sampler
@@ -400,8 +457,7 @@ impl CoreRenderer {
         target_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
         trace!(
-            "CoreRenderer::create_render_pipeline: building pipeline for format {:?}",
-            target_format
+            "CoreRenderer::create_render_pipeline: building pipeline for format {target_format:?}"
         );
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),

@@ -114,10 +114,7 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
         device_id: winit::event::DeviceId,
         event: winit::event::DeviceEvent,
     ) {
-        log::trace!(
-            "WinitInstance::device_event: device_id={device_id:?} event={:?}",
-            event
-        );
+        log::trace!("WinitInstance::device_event: device_id={device_id:?} event={event:?}",);
         let _ = (event_loop, device_id, event);
     }
 

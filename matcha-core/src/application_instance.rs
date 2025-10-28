@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::Arc,
 };
 
@@ -37,8 +37,8 @@ pub struct ApplicationInstance<
 
     frame_count: std::sync::atomic::AtomicU64,
 
-    gpu_callback_ids:
-        tokio::sync::Mutex<HashSet<gpu_utils::gpu::CallbackId, fxhash::FxBuildHasher>>,
+    device_lost_callback_id: parking_lot::Mutex<Option<gpu_utils::gpu::CallbackId>>,
+    device_recover_callback_id: parking_lot::Mutex<Option<gpu_utils::gpu::CallbackId>>,
 
     // exit signal is used to stop the rendering loop gracefully.
     // this task handle is used to kill the rendering loop task when needed.
@@ -68,9 +68,8 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
             backend,
             benchmarker: tokio::sync::Mutex::new(utils::benchmark::Benchmark::new(120)),
             frame_count: std::sync::atomic::AtomicU64::new(0),
-            gpu_callback_ids: tokio::sync::Mutex::new(HashSet::with_hasher(
-                fxhash::FxBuildHasher::default(),
-            )),
+            device_lost_callback_id: parking_lot::Mutex::new(None),
+            device_recover_callback_id: parking_lot::Mutex::new(None),
             render_loop_task_handle: tokio::sync::Mutex::new(None),
         });
 
@@ -78,42 +77,49 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
         {
             app.global_resources.gpu().enable_auto_recover(true);
 
-            let app_clone = app.clone();
-            app.global_resources
-                .gpu()
-                .add_device_lost_callback(move |e, s| {
-                    log::warn!("GPU device lost: reason={:?} info={}", e, s);
+            let app_weak = Arc::downgrade(&app);
+            let device_lost_cbid =
+                app.global_resources
+                    .gpu()
+                    .add_device_lost_callback(move |e, s| {
+                        log::warn!("GPU device lost: reason={e:?} info={s}");
 
-                    // invalidate all caches to avoid using invalid resources
-                    for window in app_clone.windows.blocking_read().values() {
-                        window.invalidate_widget_render_cache();
-                    }
-                });
+                        if let Some(app_clone) = app_weak.upgrade() {
+                            // invalidate all caches to avoid using invalid resources
+                            for window in app_clone.windows.blocking_read().values() {
+                                window.invalidate_widget_render_cache();
+                            }
+                        }
+                    });
 
-            let app_clone = app.clone();
-            app.global_resources
-                .gpu()
-                .add_device_recover_callback(move |device, queue| {
-                    log::info!("GPU device recovered");
+            let app_weak = Arc::downgrade(&app);
+            let devoce_lost_recover_cbid =
+                app.global_resources
+                    .gpu()
+                    .add_device_recover_callback(move |device, queue| {
+                        log::info!("GPU device recovered");
 
-                    // texture atlas
-                    app_clone
-                        .global_resources
-                        .texture_atlas()
-                        .recover(&device, &queue);
+                        if let Some(app) = app_weak.upgrade() {
+                            // texture atlas
+                            app.global_resources
+                                .texture_atlas()
+                                .recover(&device, &queue);
 
-                    // stencil atlas
-                    app_clone
-                        .global_resources
-                        .stencil_atlas()
-                        .recover(&device, &queue);
+                            // stencil atlas
+                            app.global_resources
+                                .stencil_atlas()
+                                .recover(&device, &queue);
 
-                    // gpu resources
-                    app_clone
-                        .global_resources
-                        .gpu_resource()
-                        .recover(&device, &queue);
-                });
+                            // gpu resources
+                            app.global_resources.gpu_resource().recover(&device, &queue);
+
+                            // core renderer
+                            app.renderer.recover(&device, &queue);
+                        }
+                    });
+
+            *app.device_lost_callback_id.lock() = Some(device_lost_cbid);
+            *app.device_recover_callback_id.lock() = Some(devoce_lost_recover_cbid);
         }
 
         app
