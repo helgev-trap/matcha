@@ -271,23 +271,25 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
 impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + Sync + 'static>
     ApplicationInstance<Message, Event, B>
 {
-    pub fn start_rendering_loop(self: &Arc<Self>) -> tokio::sync::oneshot::Sender<()> {
-        let (exit_signal_sender, exit_signal_receiver) = tokio::sync::oneshot::channel();
-
+    pub fn start_rendering_loop(self: &Arc<Self>) -> Option<tokio::sync::oneshot::Sender<()>> {
         let self_instance = self.clone();
         self.tokio_runtime.block_on(async {
             let render_loop_task_handle = &mut *self_instance.render_loop_task_handle.lock().await;
             if render_loop_task_handle.is_none() {
+                let (exit_signal_sender, exit_signal_receiver) = tokio::sync::oneshot::channel();
+
                 let self_instance = self_instance.clone();
                 let handle = self.tokio_runtime.spawn(async move {
                     self_instance.rendering_loop(exit_signal_receiver).await;
                 });
 
                 *render_loop_task_handle = Some(handle);
-            }
-        });
 
-        exit_signal_sender
+                Some(exit_signal_sender)
+            } else {
+                None
+            }
+        })
     }
 
     pub async fn rendering_loop(
