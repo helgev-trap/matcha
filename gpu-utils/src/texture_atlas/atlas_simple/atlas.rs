@@ -8,6 +8,8 @@ use parking_lot::{Mutex, RwLock};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::device_loss_recoverable::DeviceLossRecoverable;
+
 #[derive(Debug, Clone)]
 pub struct AtlasRegion {
     inner: Arc<RegionData>,
@@ -433,7 +435,48 @@ impl TextureAtlas {
             weak_self: weak_self.clone(),
         })
     }
+}
 
+impl DeviceLossRecoverable for TextureAtlas {
+    fn recover(&self, device: &wgpu::Device, _: &wgpu::Queue) {
+        let format = self.format;
+        let size = self.size();
+        let id = self.id;
+
+        let (texture, texture_view, layer_texture_views) =
+            Self::create_texture_and_view(device, format, size);
+
+        // Initialize the state with an empty allocator and allocation map.
+        let state = TextureAtlasState {
+            allocators: (0..size.depth_or_array_layers)
+                .map(|_| Size::new(size.width as i32, size.height as i32))
+                .map(AtlasAllocator::new)
+                .collect(),
+            texture_id_to_location: HashMap::new(),
+            texture_id_to_alloc_id: HashMap::new(),
+            usage: 0,
+        };
+
+        let resources = TextureAtlasResources {
+            texture,
+            texture_view,
+            layer_texture_views,
+            size,
+        };
+
+        let mut state_lock = self.state.lock();
+        *state_lock = state;
+
+        let mut resources_lock = self.resources.write();
+        *resources_lock = resources;
+
+        trace!(
+            "TextureAtlas::recover: recovered atlas id={id:?} with size={size:?} and format={format:?}"
+        );
+    }
+}
+
+impl TextureAtlas {
     pub fn size(&self) -> wgpu::Extent3d {
         self.resources.read().size
     }
@@ -743,6 +786,7 @@ pub enum TextureAtlasError {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::sync::Arc;

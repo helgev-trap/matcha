@@ -144,7 +144,7 @@ pub trait AnyWidgetFrame<E: 'static>: AnyWidget<E> + std::any::Any + Send + Sync
     /// This method must be called before `Widget::device_event`, `Widget::is_inside`, `Widget::measure`, and `Widget::arrange`.
     fn update_dirty_flags(&mut self, rearrange_flags: BackPropDirty, redraw_flags: BackPropDirty);
 
-    fn update_gpu_device(&mut self, device: &wgpu::Device, queue: &wgpu::Queue);
+    fn invalidate_render_cache(&mut self);
 }
 
 /// Represents an error that can occur when updating a `Widget` tree.
@@ -591,12 +591,13 @@ where
         }
     }
 
-    fn update_gpu_device(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        // 何らかの理由によりGPU論理デバイスが変更になったときのためのリソース再確保用のメソッド
-        // todo
+    fn invalidate_render_cache(&mut self) {
         for (child, _) in &mut self.children {
-            child.update_gpu_device(device, queue);
+            child.invalidate_render_cache();
         }
+
+        let mut cache = self.cache.lock();
+        cache.render.clear();
     }
 }
 

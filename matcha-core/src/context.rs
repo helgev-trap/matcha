@@ -14,6 +14,7 @@ use crate::window_surface::WindowSurface;
 
 pub struct GlobalResources {
     gpu: Arc<Gpu>,
+
     texture: Arc<TextureAtlas>,
     stencil: Arc<TextureAtlas>,
     gpu_resource: Arc<GpuTypeMap>,
@@ -216,7 +217,7 @@ impl WidgetContext {
     }
 }
 
-// todo: consider removing Option from return types of some of these methods
+// gpu is always available via GlobalResources while application is running
 #[allow(clippy::unwrap_used)]
 impl WidgetContext {
     /// Returns a reference to the WGPU device.
@@ -323,7 +324,6 @@ pub struct ApplicationContext {
 
     window_surface: Weak<RwLock<WindowSurface>>,
     debug_config: Weak<RwLock<DebugConfig>>,
-    // todo: replace this by `Ticker`
     current_time: Weak<RwLock<std::time::Instant>>,
 
     window_id: winit::window::WindowId,

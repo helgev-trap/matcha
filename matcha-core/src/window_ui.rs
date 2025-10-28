@@ -1,10 +1,7 @@
 use core::panic;
-use std::{
-    f32::consts::E,
-    sync::{
-        Arc,
-        atomic::{AtomicU8, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicU8, Ordering},
 };
 
 use gpu_utils::gpu::Gpu;
@@ -710,5 +707,16 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         };
 
         self.component.update(user_event, &app_ctx);
+    }
+}
+
+impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
+    /// only call this in gpu device lost callback
+    pub(crate) fn invalidate_widget_render_cache(&self) {
+        trace!("WindowUi::invalidate_widget_render_cache: invalidating render cache");
+        let mut widget_lock = self.widget.blocking_lock();
+        if let Some(widget) = widget_lock.as_mut() {
+            widget.invalidate_render_cache();
+        }
     }
 }

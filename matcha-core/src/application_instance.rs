@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
 };
 
+use gpu_utils::device_loss_recoverable::DeviceLossRecoverable;
 use renderer::CoreRenderer;
 
 use crate::{
@@ -55,7 +56,7 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
         renderer: CoreRenderer,
         backend: Arc<B>,
     ) -> Arc<Self> {
-        Arc::new(Self {
+        let app = Arc::new(Self {
             tokio_runtime,
             global_resources,
             windows: tokio::sync::RwLock::new(HashMap::with_hasher(
@@ -71,7 +72,51 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
                 fxhash::FxBuildHasher::default(),
             )),
             render_loop_task_handle: tokio::sync::Mutex::new(None),
-        })
+        });
+
+        // register gpu device lost callback
+        {
+            app.global_resources.gpu().enable_auto_recover(true);
+
+            let app_clone = app.clone();
+            app.global_resources
+                .gpu()
+                .add_device_lost_callback(move |e, s| {
+                    log::warn!("GPU device lost: reason={:?} info={}", e, s);
+
+                    // invalidate all caches to avoid using invalid resources
+                    for window in app_clone.windows.blocking_read().values() {
+                        window.invalidate_widget_render_cache();
+                    }
+                });
+
+            let app_clone = app.clone();
+            app.global_resources
+                .gpu()
+                .add_device_recover_callback(move |device, queue| {
+                    log::info!("GPU device recovered");
+
+                    // texture atlas
+                    app_clone
+                        .global_resources
+                        .texture_atlas()
+                        .recover(&device, &queue);
+
+                    // stencil atlas
+                    app_clone
+                        .global_resources
+                        .stencil_atlas()
+                        .recover(&device, &queue);
+
+                    // gpu resources
+                    app_clone
+                        .global_resources
+                        .gpu_resource()
+                        .recover(&device, &queue);
+                });
+        }
+
+        app
     }
 }
 

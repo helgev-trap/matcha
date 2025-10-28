@@ -366,7 +366,7 @@ impl<Model: Send + Sync + 'static, Event: 'static, InnerEvent: 'static> AnyWidge
             .update_dirty_flags(rearrange_flags, redraw_flags);
     }
 
-    fn update_gpu_device(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.widget_tree.update_gpu_device(device, queue);
+    fn invalidate_render_cache(&mut self) {
+        self.widget_tree.invalidate_render_cache();
     }
 }
