@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
 use log::{debug, trace};
 
@@ -75,8 +75,7 @@ impl RuntimeBuilder {
                 let threads = threads.min(cpu_threads);
 
                 trace!(
-                    "RuntimeBuilder::build: creating runtime with threads={} (cpu={})",
-                    threads, cpu_threads
+                    "RuntimeBuilder::build: creating runtime with threads={threads} (cpu={cpu_threads})"
                 );
                 if threads == 1 {
                     tokio::runtime::Builder::new_current_thread()
@@ -128,8 +127,10 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
         self
     }
 
-    pub fn worker_threads(mut self, threads: usize) -> Self {
-        self.runtime_builder = RuntimeBuilder::CreateInternally { threads };
+    pub fn worker_threads(mut self, threads: NonZeroUsize) -> Self {
+        self.runtime_builder = RuntimeBuilder::CreateInternally {
+            threads: threads.into(),
+        };
         self
     }
 

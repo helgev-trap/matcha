@@ -5,7 +5,7 @@ use super::{
     backend::Backend, color::Color, device_input::mouse_state::MousePrimaryButton,
     ui::component::Component, winit_instance::WinitInstanceBuilder,
 };
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 /// Top-level application builder.
 /// Generics:
@@ -90,7 +90,7 @@ where
         self
     }
 
-    pub fn worker_threads(mut self, threads: usize) -> Self {
+    pub fn worker_threads(mut self, threads: NonZeroUsize) -> Self {
         self.builder = self.builder.worker_threads(threads);
         self
     }

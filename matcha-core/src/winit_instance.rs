@@ -70,7 +70,7 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
         self.application_instance.call_all_setups();
 
         // start rendering loop
-        if let Some(render_loop_exit_signal) = self.application_instance.start_rendering_loop(){
+        if let Some(render_loop_exit_signal) = self.application_instance.start_rendering_loop() {
             self.render_loop_exit_signal = Some(render_loop_exit_signal);
         }
     }

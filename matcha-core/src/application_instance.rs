@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use gpu_utils::device_loss_recoverable::DeviceLossRecoverable;
 use renderer::CoreRenderer;
@@ -300,11 +297,15 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
             // receive exit signal.
             match exit_signal.try_recv() {
                 Ok(_) => {
-                    log::info!("ApplicationInstance::rendering_loop: exit signal received, stopping rendering loop");
+                    log::info!(
+                        "ApplicationInstance::rendering_loop: exit signal received, stopping rendering loop"
+                    );
                     break;
                 }
                 Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
-                    log::error!("ApplicationInstance::rendering_loop: exit signal channel closed, stopping rendering loop");
+                    log::error!(
+                        "ApplicationInstance::rendering_loop: exit signal channel closed, stopping rendering loop"
+                    );
                     break;
                 }
                 Err(tokio::sync::oneshot::error::TryRecvError::Empty) => (),
