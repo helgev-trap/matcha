@@ -320,49 +320,54 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
 
         let _surface_guard = self.surface_guard.lock_for_render().await;
 
-        // get surface texture, format, viewport size
-        let (surface_texture, surface_format, viewport_size) = {
-            let mut window_guard = self.window.upgradable_read();
-            match self.acquire_surface(&mut window_guard, resource) {
-                Some(v) => v,
-                None => return,
-            }
-        };
+        {
+            // get surface texture, format, viewport size
+            let (surface_texture, surface_format, viewport_size) = {
+                let mut window_guard = self.window.upgradable_read();
+                match self.acquire_surface(&mut window_guard, resource) {
+                    Some(v) => v,
+                    None => return,
+                }
+            };
 
-        let surface_texture_view = surface_texture.texture.create_view(&Default::default());
+            let surface_texture_view = surface_texture.texture.create_view(&Default::default());
 
-        // placeholder background
-        // TODO: use black transparent texture as root background
-        let background = Background::new(&surface_texture_view, [0.0, 0.0]);
+            // placeholder background
+            // TODO: use black transparent texture as root background
+            let background = Background::new(&surface_texture_view, [0.0, 0.0]);
 
-        let Some(ctx) = resource.widget_context(tokio_handle, &self.window) else {
-            trace!("WindowUi::render: widget context not available, skipping render");
-            return;
-        };
+            let Some(ctx) = resource.widget_context(tokio_handle, &self.window) else {
+                trace!("WindowUi::render: widget context not available, skipping render");
+                return;
+            };
 
-        // Ensure widget tree is initialized or updated
-        self.ensure_widget_ready(benchmark).await;
+            // Ensure widget tree is initialized or updated
+            self.ensure_widget_ready(benchmark).await;
 
-        // Layout and render
-        let render_node = self
-            .layout_and_render(viewport_size, background, &ctx, benchmark)
-            .await;
+            // Layout and render
+            let render_node = self
+                .layout_and_render(viewport_size, background, &ctx, benchmark)
+                .await;
 
-        let _ = core_renderer.render(
-            &resource.gpu().device(),
-            &resource.gpu().queue(),
-            surface_format,
-            &surface_texture
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default()),
-            viewport_size,
-            &render_node,
-            base_color.to_wgpu_color(),
-            &resource.texture_atlas().texture(),
-            &resource.stencil_atlas().texture(),
-        );
+            let _ = core_renderer.render(
+                &resource.gpu().device(),
+                &resource.gpu().queue(),
+                surface_format,
+                &surface_texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                viewport_size,
+                &render_node,
+                base_color.to_wgpu_color(),
+                &resource.texture_atlas().texture(),
+                &resource.stencil_atlas().texture(),
+            );
 
-        surface_texture.present();
+            // Present surface via blocking task to avoid blocking async runtime
+            tokio::task::spawn_blocking(|| surface_texture.present())
+                .await
+                .expect("present surface task panicked.");
+        }
 
         // surface_guard keeps configuration serialized with render duration.
     }

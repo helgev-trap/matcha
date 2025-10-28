@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use renderer::CoreRenderer;
 
@@ -33,6 +36,9 @@ pub struct ApplicationInstance<
 
     frame_count: std::sync::atomic::AtomicU64,
 
+    gpu_callback_ids:
+        tokio::sync::Mutex<HashSet<gpu_utils::gpu::CallbackId, fxhash::FxBuildHasher>>,
+
     // exit signal is used to stop the rendering loop gracefully.
     // this task handle is used to kill the rendering loop task when needed.
     render_loop_task_handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -61,6 +67,9 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
             backend,
             benchmarker: tokio::sync::Mutex::new(utils::benchmark::Benchmark::new(120)),
             frame_count: std::sync::atomic::AtomicU64::new(0),
+            gpu_callback_ids: tokio::sync::Mutex::new(HashSet::with_hasher(
+                fxhash::FxBuildHasher::default(),
+            )),
             render_loop_task_handle: tokio::sync::Mutex::new(None),
         })
     }
