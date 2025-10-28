@@ -1,7 +1,10 @@
 use core::panic;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU8, Ordering},
+use std::{
+    f32::consts::E,
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
 };
 
 use gpu_utils::gpu::Gpu;
@@ -349,7 +352,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
                 .layout_and_render(viewport_size, background, &ctx, benchmark)
                 .await;
 
-            let _ = core_renderer.render(
+            let render_rst = core_renderer.render(
                 &resource.gpu().device(),
                 &resource.gpu().queue(),
                 surface_format,
@@ -362,6 +365,10 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
                 &resource.texture_atlas().texture(),
                 &resource.stencil_atlas().texture(),
             );
+
+            if let Err(e) = render_rst {
+                warn!("WindowUi::render: rendering failed: {e:?}");
+            }
 
             // Present surface via blocking task to avoid blocking async runtime
             tokio::task::spawn_blocking(|| surface_texture.present())

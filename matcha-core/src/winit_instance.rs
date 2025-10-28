@@ -25,15 +25,6 @@ pub struct WinitInstance<
     render_loop_exit_signal: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
-// impl<Message, Event: Send + 'static, B: Backend<Event> + 'static> WinitInstance<Message, Event, B> {
-//     pub fn builder(
-//         component: impl AnyComponent<Message, Event> + 'static,
-//         backend: B,
-//     ) -> WinitInstanceBuilder<Message, Event, B> {
-//         WinitInstanceBuilder::new(component, backend)
-//     }
-// }
-
 // MARK: render
 
 impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + Sync + 'static>

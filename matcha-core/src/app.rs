@@ -185,14 +185,22 @@ where
         self
     }
 
-    pub fn run(self) -> Result<(), winit::error::EventLoopError> {
+    pub fn run(self) -> Result<(), AppRunError> {
         debug!("App::run: building WinitInstance");
-        let mut winit_app = self.builder.build().expect("Failed to build WinitInstance");
+        let mut winit_app = self.builder.build()?;
         let event_loop = winit::event_loop::EventLoop::<Message>::with_user_event().build()?;
         trace!("App::run: starting event loop");
         event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
-        let result = event_loop.run_app(&mut winit_app);
+        event_loop.run_app(&mut winit_app)?;
         trace!("App::run: event loop exited");
-        result
+        Ok(())
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum AppRunError {
+    #[error("Failed to initialize WinitInstance")]
+    InitError(#[from] crate::winit_instance::InitError),
+    #[error("With in winit event loop: {0}")]
+    WinitEventLoopError(#[from] winit::error::EventLoopError),
 }
