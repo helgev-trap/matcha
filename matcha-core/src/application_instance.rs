@@ -298,8 +298,16 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
     ) {
         loop {
             // receive exit signal.
-            if exit_signal.try_recv().is_ok() {
-                break;
+            match exit_signal.try_recv() {
+                Ok(_) => {
+                    log::info!("ApplicationInstance::rendering_loop: exit signal received, stopping rendering loop");
+                    break;
+                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    log::error!("ApplicationInstance::rendering_loop: exit signal channel closed, stopping rendering loop");
+                    break;
+                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => (),
             }
 
             {
