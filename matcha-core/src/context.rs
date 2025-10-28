@@ -235,6 +235,11 @@ impl WidgetContext {
         self.any_resource.upgrade().unwrap().clone()
     }
 
+    /// Provides access to a type-safe, shared GPU resource storage which can recover from device loss.
+    pub fn gpu_resource(&self) -> Arc<GpuTypeMap> {
+        self.gpu_resource.upgrade().unwrap().clone()
+    }
+
     /// Returns the texture format of the surface.
     pub fn surface_format(&self) -> Option<wgpu::TextureFormat> {
         self.window_surface

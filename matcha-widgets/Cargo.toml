@@ -36,6 +36,7 @@ num = { workspace = true }
 glyphon = { workspace = true }
 fxhash = { workspace = true }
 dashmap = { workspace = true }
+log = { workspace = true }
 
 [lints]
 workspace = true

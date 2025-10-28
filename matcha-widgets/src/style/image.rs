@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::style::Style;
 use dashmap::DashMap;
+use gpu_utils::device_loss_recoverable::DeviceLossRecoverable;
 use image::EncodableLayout;
 use matcha_core::{
     context::WidgetContext,
@@ -14,6 +15,13 @@ use crate::types::size::{ChildSize, Size};
 #[derive(Default)]
 struct ImageCache {
     map: DashMap<ImageCacheKey, ImageCacheData, fxhash::FxBuildHasher>,
+}
+
+impl DeviceLossRecoverable for ImageCache {
+    fn recover(&self, _device: &wgpu::Device, _queue: &wgpu::Queue) {
+        log::info!("ImageCache: recovering from device loss");
+        self.map.clear();
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -248,7 +256,7 @@ impl Image {
 // helper methods
 impl Image {
     fn with_image<R>(&self, ctx: &WidgetContext, f: impl FnOnce(&wgpu::Texture) -> R) -> Option<R> {
-        let cache_map = ctx.any_resource().get_or_insert_default::<ImageCache>();
+        let cache_map = ctx.gpu_resource().get_or_insert_default::<ImageCache>();
         let image_cache = cache_map
             .map
             .entry(self.key())
