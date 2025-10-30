@@ -2,13 +2,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Runtime debug configuration used to selectively disable caches for profiling.
 /// All fields are AtomicBool to allow low-cost runtime toggling.
-#[derive(Clone)]
 pub(crate) struct DebugConfig {
     always_rebuild_widget: AtomicBool,
     disable_layout_measure_cache: AtomicBool,
     disable_layout_arrange_cache: AtomicBool,
     disable_render_node_cache: AtomicBool,
 }
+
+
 
 impl Default for DebugConfig {
     fn default() -> Self {

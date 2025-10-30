@@ -24,7 +24,14 @@ utils = { path = "utils" }
 gpu-utils = { path = "gpu-utils" }
 
 # async runtime, utilities
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "parking_lot", "time"] }
+tokio = { version = "1", features = [
+    "rt",
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "parking_lot",
+    "time",
+] }
 async-trait = "0.1.88"
 futures = "0.3.31"
 parking_lot = { version = "0.12.3" }
@@ -35,7 +42,7 @@ accesskit = "0.21"
 accesskit_winit = { version = "0.29", features = ["tokio"] }
 
 # graphics
-wgpu = "26.0.1"
+wgpu = { version = "26.0.1", features = ["noop"] }
 bytemuck = { version = "1", features = ["derive"] }
 vello = "0.6.0"
 
@@ -46,7 +53,7 @@ nalgebra = { version = "0.34", features = ["bytemuck"] }
 image = "0.25"
 
 # font
-glyphon = { git = "https://github.com/grovesNL/glyphon.git", rev="724ab57edbd6c59ba219cd99cf89925d056392db" }
+glyphon = { git = "https://github.com/grovesNL/glyphon.git", rev = "724ab57edbd6c59ba219cd99cf89925d056392db" }
 
 # other
 rand = "0.9"

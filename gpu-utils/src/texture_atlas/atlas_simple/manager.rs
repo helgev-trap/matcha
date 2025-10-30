@@ -125,37 +125,9 @@ pub enum AtlasManagerError {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-
-    async fn setup_wgpu() -> (wgpu::Device, wgpu::Queue) {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
-            ..Default::default()
-        });
-        let adapter = match instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: None,
-                force_fallback_adapter: true,
-            })
-            .await
-        {
-            Ok(adapter) => adapter,
-            Err(e) => instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::default(),
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                })
-                .await
-                .expect("Failed to acquire wgpu adapter"),
-        };
-        adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
-            .await
-            .unwrap()
-    }
 
     #[cfg(test)]
     impl AtlasManager {
@@ -173,191 +145,181 @@ mod tests {
     }
 
     /// Tests the initialization of `AtlasManager`.
-    #[test]
-    fn test_manager_new() {
-        futures::executor::block_on(async {
-            let (device, queue) = setup_wgpu().await;
-            let memory_strategy = MemoryAllocateStrategy {
-                initial_pages: 1,
-                resize_threshold: Some(0.8),
-                resize_factor: 2.0,
-                shrink_threshold: 0.2,
-                shrink_factor: 0.5,
-            };
-            let max_size = wgpu::Extent3d {
-                width: 1024,
-                height: 1024,
-                depth_or_array_layers: 8,
-            };
-            let manager = AtlasManager::new(
-                Arc::new(device),
-                Arc::new(queue),
-                memory_strategy,
-                max_size,
-                TextureAtlas::DEFAULT_MARGIN_PX,
-            );
+    #[tokio::test]
+    async fn test_manager_new() {
+        let (_, _, device, queue) = crate::wgpu_utils::noop_wgpu().await;
+        let memory_strategy = MemoryAllocateStrategy {
+            initial_pages: 1,
+            resize_threshold: Some(0.8),
+            resize_factor: 2.0,
+            shrink_threshold: 0.2,
+            shrink_factor: 0.5,
+        };
+        let max_size = wgpu::Extent3d {
+            width: 1024,
+            height: 1024,
+            depth_or_array_layers: 8,
+        };
+        let manager = AtlasManager::new(
+            Arc::new(device),
+            Arc::new(queue),
+            memory_strategy,
+            max_size,
+            TextureAtlas::DEFAULT_MARGIN_PX,
+        );
 
-            assert_eq!(manager.atlas_count(), 0);
-        });
+        assert_eq!(manager.atlas_count(), 0);
     }
 
     /// Tests adding a new format set to the manager.
-    #[test]
-    fn test_add_format() {
-        futures::executor::block_on(async {
-            let (device, queue) = setup_wgpu().await;
-            let memory_strategy = MemoryAllocateStrategy {
-                initial_pages: 2,
-                resize_threshold: Some(0.8),
-                resize_factor: 2.0,
-                shrink_threshold: 0.2,
-                shrink_factor: 0.5,
-            };
-            let max_size = wgpu::Extent3d {
-                width: 1024,
-                height: 1024,
-                depth_or_array_layers: 8,
-            };
-            let manager = AtlasManager::new(
-                Arc::new(device),
-                Arc::new(queue),
-                memory_strategy,
-                max_size,
-                TextureAtlas::DEFAULT_MARGIN_PX,
-            );
+    #[tokio::test]
+    async fn test_add_format() {
+        let (_, _, device, queue) = crate::wgpu_utils::noop_wgpu().await;
+        let memory_strategy = MemoryAllocateStrategy {
+            initial_pages: 2,
+            resize_threshold: Some(0.8),
+            resize_factor: 2.0,
+            shrink_threshold: 0.2,
+            shrink_factor: 0.5,
+        };
+        let max_size = wgpu::Extent3d {
+            width: 1024,
+            height: 1024,
+            depth_or_array_layers: 8,
+        };
+        let manager = AtlasManager::new(
+            Arc::new(device),
+            Arc::new(queue),
+            memory_strategy,
+            max_size,
+            TextureAtlas::DEFAULT_MARGIN_PX,
+        );
 
-            let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-            manager.add_format(format).unwrap();
-            assert_eq!(manager.atlas_count(), 1);
-            assert_eq!(
-                manager
-                    .get_atlas_size(format)
-                    .unwrap()
-                    .depth_or_array_layers,
-                2
-            );
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        manager.add_format(format).unwrap();
+        assert_eq!(manager.atlas_count(), 1);
+        assert_eq!(
+            manager
+                .get_atlas_size(format)
+                .unwrap()
+                .depth_or_array_layers,
+            2
+        );
 
-            // Test adding existing format set
-            let result = manager.add_format(format);
-            assert!(matches!(
-                result,
-                Err(AtlasManagerError::FormatSetAlreadyExists)
-            ));
-        });
+        // Test adding existing format set
+        let result = manager.add_format(format);
+        assert!(matches!(
+            result,
+            Err(AtlasManagerError::FormatSetAlreadyExists)
+        ));
     }
 
     /// Tests basic texture allocation.
-    #[test]
-    fn test_allocate_basic() {
-        futures::executor::block_on(async {
-            let (device, queue) = setup_wgpu().await;
-            let memory_strategy = MemoryAllocateStrategy {
-                initial_pages: 1,
-                resize_threshold: Some(0.8),
-                resize_factor: 2.0,
-                shrink_threshold: 0.2,
-                shrink_factor: 0.5,
-            };
-            let max_size = wgpu::Extent3d {
-                width: 256,
-                height: 256,
-                depth_or_array_layers: 1,
-            };
-            let manager = AtlasManager::new(
-                Arc::new(device),
-                Arc::new(queue),
-                memory_strategy,
-                max_size,
-                TextureAtlas::DEFAULT_MARGIN_PX,
-            );
+    #[tokio::test]
+    async fn test_allocate_basic() {
+        let (_, _, device, queue) = crate::wgpu_utils::noop_wgpu().await;
+        let memory_strategy = MemoryAllocateStrategy {
+            initial_pages: 1,
+            resize_threshold: Some(0.8),
+            resize_factor: 2.0,
+            shrink_threshold: 0.2,
+            shrink_factor: 0.5,
+        };
+        let max_size = wgpu::Extent3d {
+            width: 256,
+            height: 256,
+            depth_or_array_layers: 1,
+        };
+        let manager = AtlasManager::new(
+            Arc::new(device),
+            Arc::new(queue),
+            memory_strategy,
+            max_size,
+            TextureAtlas::DEFAULT_MARGIN_PX,
+        );
 
-            let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-            manager.add_format(format).unwrap();
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        manager.add_format(format).unwrap();
 
-            let texture = manager.allocate([32, 32], format).unwrap();
-            assert_eq!(texture.texture_size(), [32, 32]);
-            let margin = TextureAtlas::DEFAULT_MARGIN_PX as usize;
-            assert_eq!(
-                manager.get_atlas_usage(format).unwrap(),
-                (32 + 2 * margin) * (32 + 2 * margin)
-            );
-        });
+        let texture = manager.allocate([32, 32], format).unwrap();
+        assert_eq!(texture.texture_size(), [32, 32]);
+        let margin = TextureAtlas::DEFAULT_MARGIN_PX as usize;
+        assert_eq!(
+            manager.get_atlas_usage(format).unwrap(),
+            (32 + 2 * margin) * (32 + 2 * margin)
+        );
     }
 
     /// Tests allocation with invalid texture sizes.
-    #[test]
-    fn test_allocate_invalid_size() {
-        futures::executor::block_on(async {
-            let (device, queue) = setup_wgpu().await;
-            let memory_strategy = MemoryAllocateStrategy {
-                initial_pages: 1,
-                resize_threshold: Some(0.8),
-                resize_factor: 2.0,
-                shrink_threshold: 0.2,
-                shrink_factor: 0.5,
-            };
-            let max_size = wgpu::Extent3d {
-                width: 256,
-                height: 256,
-                depth_or_array_layers: 1,
-            };
-            let manager = AtlasManager::new(
-                Arc::new(device),
-                Arc::new(queue),
-                memory_strategy,
-                max_size,
-                TextureAtlas::DEFAULT_MARGIN_PX,
-            );
+    #[tokio::test]
+    async fn test_allocate_invalid_size() {
+        let (_, _, device, queue) = crate::wgpu_utils::noop_wgpu().await;
+        let memory_strategy = MemoryAllocateStrategy {
+            initial_pages: 1,
+            resize_threshold: Some(0.8),
+            resize_factor: 2.0,
+            shrink_threshold: 0.2,
+            shrink_factor: 0.5,
+        };
+        let max_size = wgpu::Extent3d {
+            width: 256,
+            height: 256,
+            depth_or_array_layers: 1,
+        };
+        let manager = AtlasManager::new(
+            Arc::new(device),
+            Arc::new(queue),
+            memory_strategy,
+            max_size,
+            TextureAtlas::DEFAULT_MARGIN_PX,
+        );
 
-            let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-            manager.add_format(format).unwrap();
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        manager.add_format(format).unwrap();
 
-            // Zero width
-            let result = manager.allocate([0, 32], format);
-            assert!(matches!(result, Err(AtlasManagerError::InvalidTextureSize)));
+        // Zero width
+        let result = manager.allocate([0, 32], format);
+        assert!(matches!(result, Err(AtlasManagerError::InvalidTextureSize)));
 
-            // Zero height
-            let result = manager.allocate([32, 0], format);
-            assert!(matches!(result, Err(AtlasManagerError::InvalidTextureSize)));
+        // Zero height
+        let result = manager.allocate([32, 0], format);
+        assert!(matches!(result, Err(AtlasManagerError::InvalidTextureSize)));
 
-            // Exceeds max width
-            let result = manager.allocate([257, 32], format);
-            assert!(matches!(result, Err(AtlasManagerError::InvalidTextureSize)));
+        // Exceeds max width
+        let result = manager.allocate([257, 32], format);
+        assert!(matches!(result, Err(AtlasManagerError::InvalidTextureSize)));
 
-            // Exceeds max height
-            let result = manager.allocate([32, 257], format);
-            assert!(matches!(result, Err(AtlasManagerError::InvalidTextureSize)));
-        });
+        // Exceeds max height
+        let result = manager.allocate([32, 257], format);
+        assert!(matches!(result, Err(AtlasManagerError::InvalidTextureSize)));
     }
 
     /// Tests allocation with a non-existent format set.
-    #[test]
-    fn test_allocate_format_not_found() {
-        futures::executor::block_on(async {
-            let (device, queue) = setup_wgpu().await;
-            let memory_strategy = MemoryAllocateStrategy {
-                initial_pages: 1,
-                resize_threshold: Some(0.8),
-                resize_factor: 2.0,
-                shrink_threshold: 0.2,
-                shrink_factor: 0.5,
-            };
-            let max_size = wgpu::Extent3d {
-                width: 256,
-                height: 256,
-                depth_or_array_layers: 1,
-            };
-            let manager = AtlasManager::new(
-                Arc::new(device),
-                Arc::new(queue),
-                memory_strategy,
-                max_size,
-                TextureAtlas::DEFAULT_MARGIN_PX,
-            );
+    #[tokio::test]
+    async fn test_allocate_format_not_found() {
+        let (_, _, device, queue) = crate::wgpu_utils::noop_wgpu().await;
+        let memory_strategy = MemoryAllocateStrategy {
+            initial_pages: 1,
+            resize_threshold: Some(0.8),
+            resize_factor: 2.0,
+            shrink_threshold: 0.2,
+            shrink_factor: 0.5,
+        };
+        let max_size = wgpu::Extent3d {
+            width: 256,
+            height: 256,
+            depth_or_array_layers: 1,
+        };
+        let manager = AtlasManager::new(
+            Arc::new(device),
+            Arc::new(queue),
+            memory_strategy,
+            max_size,
+            TextureAtlas::DEFAULT_MARGIN_PX,
+        );
 
-            let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-            let result = manager.allocate([32, 32], format);
-            assert!(matches!(result, Err(AtlasManagerError::FormatSetNotFound)));
-        });
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let result = manager.allocate([32, 32], format);
+        assert!(matches!(result, Err(AtlasManagerError::FormatSetNotFound)));
     }
 }

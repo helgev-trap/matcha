@@ -307,37 +307,32 @@ mod tests {
     const DUMMY_DATA_5X5: [u8; 25] = [0; 25];
     const DUMMY_DATA_15X15: [u8; 225] = [0; 225];
 
-    fn get_device_queue() -> (wgpu::Device, wgpu::Queue) {
-        // prepare gpu
+    async fn noop_wgpu() -> (wgpu::Instance, wgpu::Adapter, wgpu::Device, wgpu::Queue) {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+            backends: wgpu::Backends::NOOP,
+            backend_options: wgpu::BackendOptions {
+                noop: wgpu::NoopBackendOptions { enable: true },
+                ..Default::default()
+            },
             ..Default::default()
         });
 
-        let adaptor =
-            futures::executor::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::LowPower,
-                compatible_surface: None,
-                force_fallback_adapter: true, // for testing on environments without a gpu
-            }))
-            .unwrap();
+        let adapter = instance
+            .enumerate_adapters(wgpu::Backends::NOOP)
+            .pop()
+            .expect("Failed to find noop adapter");
 
-        let (device, queue) =
-            futures::executor::block_on(adaptor.request_device(&wgpu::DeviceDescriptor {
-                label: None,
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::default(),
-                trace: wgpu::Trace::Off,
-            }))
-            .unwrap();
+        let (device, queue) = adapter
+            .request_device(&Default::default())
+            .await
+            .expect("Failed to create device");
 
-        (device, queue)
+        (instance, adapter, device, queue)
     }
 
     #[test]
     fn cache_atlas_1_depth() {
-        let (device, queue) = get_device_queue();
+        let (_, _, device, queue) = futures::executor::block_on(noop_wgpu());
 
         // initialize cache atlas
 
@@ -391,7 +386,7 @@ mod tests {
 
     #[test]
     fn cache_atlas_2_depth() {
-        let (device, queue) = get_device_queue();
+        let (_, _, device, queue) = futures::executor::block_on(noop_wgpu());
 
         // initialize cache atlas
 
