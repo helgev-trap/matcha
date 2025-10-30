@@ -42,6 +42,7 @@ impl GlobalResources {
                 depth_or_array_layers: 1,
             },
             wgpu::TextureFormat::Rgba8UnormSrgb,
+            TextureAtlas::DEFAULT_MARGIN_PX,
         );
         let stencil = TextureAtlas::new(
             &gpu.device(),
@@ -51,6 +52,7 @@ impl GlobalResources {
                 depth_or_array_layers: 1,
             },
             wgpu::TextureFormat::R8Unorm,
+            TextureAtlas::DEFAULT_MARGIN_PX,
         );
 
         let gpu_resource = Arc::new(GpuTypeMap::new());

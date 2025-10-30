@@ -196,6 +196,7 @@ impl AtlasRegion {
                                 load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                                 store: wgpu::StoreOp::Store,
                             },
+                            depth_slice: None,
                         })
                     })
                     .collect();

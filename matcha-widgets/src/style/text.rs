@@ -236,11 +236,14 @@ impl Style for Text {
                             metadata: 0,
                             cache_key_flags: glyphon::cosmic_text::CacheKeyFlags::empty(),
                             metrics_opt: None,
+                            letter_spacing_opt: Some(glyphon::cosmic_text::LetterSpacing(0.0)),
+                            font_features: glyphon::cosmic_text::FontFeatures::default(),
                         },
                     )
                 }),
-                glyphon::Attrs::new(),
+                &glyphon::Attrs::new(),
                 glyphon::cosmic_text::Shaping::Advanced,
+                None,
             );
 
             buffer.shape_until_scroll(&mut font_system, false);
@@ -312,16 +315,19 @@ impl Style for Text {
                         metadata: 0,
                         cache_key_flags: glyphon::cosmic_text::CacheKeyFlags::empty(),
                         metrics_opt: None,
+                        letter_spacing_opt: None,
+                        font_features: glyphon::cosmic_text::FontFeatures::default(),
                     },
                 )
             }),
-            glyphon::Attrs::new(),
+            &glyphon::Attrs::new(),
             glyphon::cosmic_text::Shaping::Advanced,
+            None,
         );
         buffer.shape_until_scroll(&mut font_system, false);
 
         // 3) Prepare viewport and text_renderer, caching them in RwOption to avoid recreation
-        let target_size = target.size();
+        let target_size = target.texture_size();
         // viewport resolution should match the render target (region) size so shader NDC math maps correctly
         let (_, viewport) = &mut *self
             .viewport

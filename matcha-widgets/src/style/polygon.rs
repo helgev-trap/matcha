@@ -350,7 +350,7 @@ impl Style for Polygon {
         offset: [f32; 2],
         ctx: &WidgetContext,
     ) {
-        let target_size = target.size();
+        let target_size = target.texture_size();
         let target_format = target.format();
         let mut render_pass = match target.begin_render_pass(encoder) {
             Ok(rp) => rp,

@@ -43,7 +43,7 @@ impl Style for SolidBox {
         offset: [f32; 2],
         ctx: &WidgetContext,
     ) {
-        let target_size = target.size();
+        let target_size = target.texture_size();
         let target_format = target.format();
         let renderer = ctx.any_resource().get_or_insert_default::<VertexColor>();
 

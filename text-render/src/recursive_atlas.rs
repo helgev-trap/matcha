@@ -322,16 +322,15 @@ mod tests {
             }))
             .unwrap();
 
-        let (device, queue) = futures::executor::block_on(adaptor.request_device(
-            &wgpu::DeviceDescriptor {
+        let (device, queue) =
+            futures::executor::block_on(adaptor.request_device(&wgpu::DeviceDescriptor {
                 label: None,
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
                 memory_hints: wgpu::MemoryHints::default(),
-            },
-            None,
-        ))
-        .unwrap();
+                trace: wgpu::Trace::Off,
+            }))
+            .unwrap();
 
         (device, queue)
     }

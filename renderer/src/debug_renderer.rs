@@ -213,6 +213,7 @@ fn fragment_main(in_ : VertexOutput) -> @location(0) vec4<f32> {{
                         load: wgpu::LoadOp::Clear(load_color),
                         store: wgpu::StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
                 occlusion_query_set: None,

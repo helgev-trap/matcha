@@ -20,6 +20,7 @@ pub struct AtlasManager {
 
     max_size_of_3d_texture: wgpu::Extent3d,
     memory_strategy: MemoryAllocateStrategy,
+    margin: u32,
 
     atlases: DashMap<wgpu::TextureFormat, Arc<TextureAtlas>>,
 }
@@ -30,6 +31,7 @@ impl AtlasManager {
         queue: Arc<wgpu::Queue>,
         memory_strategy: MemoryAllocateStrategy,
         max_size_of_3d_texture: wgpu::Extent3d,
+        margin: u32,
     ) -> Self {
         trace!(
             "AtlasManager::new: max_size={}x{} layers={}",
@@ -42,6 +44,7 @@ impl AtlasManager {
             queue,
             max_size_of_3d_texture,
             memory_strategy,
+            margin,
             atlases: DashMap::new(),
         }
     }
@@ -63,6 +66,7 @@ impl AtlasManager {
                 depth_or_array_layers: self.memory_strategy.initial_pages,
             },
             format,
+            self.margin,
         );
         self.atlases.insert(format, atlas);
         debug!("AtlasManager::add_format: added format {:?}", format);
@@ -129,16 +133,26 @@ mod tests {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
-        let adapter = instance
+        let adapter = match instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: None,
                 force_fallback_adapter: true,
             })
             .await
-            .unwrap();
+        {
+            Ok(adapter) => adapter,
+            Err(e) => instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::default(),
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
+                .expect("Failed to acquire wgpu adapter"),
+        };
         adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
+            .request_device(&wgpu::DeviceDescriptor::default())
             .await
             .unwrap()
     }
@@ -175,8 +189,13 @@ mod tests {
                 height: 1024,
                 depth_or_array_layers: 8,
             };
-            let manager =
-                AtlasManager::new(Arc::new(device), Arc::new(queue), memory_strategy, max_size);
+            let manager = AtlasManager::new(
+                Arc::new(device),
+                Arc::new(queue),
+                memory_strategy,
+                max_size,
+                TextureAtlas::DEFAULT_MARGIN_PX,
+            );
 
             assert_eq!(manager.atlas_count(), 0);
         });
@@ -199,8 +218,13 @@ mod tests {
                 height: 1024,
                 depth_or_array_layers: 8,
             };
-            let manager =
-                AtlasManager::new(Arc::new(device), Arc::new(queue), memory_strategy, max_size);
+            let manager = AtlasManager::new(
+                Arc::new(device),
+                Arc::new(queue),
+                memory_strategy,
+                max_size,
+                TextureAtlas::DEFAULT_MARGIN_PX,
+            );
 
             let format = wgpu::TextureFormat::Rgba8UnormSrgb;
             manager.add_format(format).unwrap();
@@ -239,15 +263,24 @@ mod tests {
                 height: 256,
                 depth_or_array_layers: 1,
             };
-            let manager =
-                AtlasManager::new(Arc::new(device), Arc::new(queue), memory_strategy, max_size);
+            let manager = AtlasManager::new(
+                Arc::new(device),
+                Arc::new(queue),
+                memory_strategy,
+                max_size,
+                TextureAtlas::DEFAULT_MARGIN_PX,
+            );
 
             let format = wgpu::TextureFormat::Rgba8UnormSrgb;
             manager.add_format(format).unwrap();
 
             let texture = manager.allocate([32, 32], format).unwrap();
-            assert_eq!(texture.size(), [32, 32]);
-            assert_eq!(manager.get_atlas_usage(format).unwrap(), 32 * 32);
+            assert_eq!(texture.texture_size(), [32, 32]);
+            let margin = TextureAtlas::DEFAULT_MARGIN_PX as usize;
+            assert_eq!(
+                manager.get_atlas_usage(format).unwrap(),
+                (32 + 2 * margin) * (32 + 2 * margin)
+            );
         });
     }
 
@@ -268,8 +301,13 @@ mod tests {
                 height: 256,
                 depth_or_array_layers: 1,
             };
-            let manager =
-                AtlasManager::new(Arc::new(device), Arc::new(queue), memory_strategy, max_size);
+            let manager = AtlasManager::new(
+                Arc::new(device),
+                Arc::new(queue),
+                memory_strategy,
+                max_size,
+                TextureAtlas::DEFAULT_MARGIN_PX,
+            );
 
             let format = wgpu::TextureFormat::Rgba8UnormSrgb;
             manager.add_format(format).unwrap();
@@ -309,8 +347,13 @@ mod tests {
                 height: 256,
                 depth_or_array_layers: 1,
             };
-            let manager =
-                AtlasManager::new(Arc::new(device), Arc::new(queue), memory_strategy, max_size);
+            let manager = AtlasManager::new(
+                Arc::new(device),
+                Arc::new(queue),
+                memory_strategy,
+                max_size,
+                TextureAtlas::DEFAULT_MARGIN_PX,
+            );
 
             let format = wgpu::TextureFormat::Rgba8UnormSrgb;
             let result = manager.allocate([32, 32], format);

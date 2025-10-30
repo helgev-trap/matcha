@@ -35,9 +35,9 @@ accesskit = "0.21"
 accesskit_winit = { version = "0.29", features = ["tokio"] }
 
 # graphics
-wgpu = "24.0"
+wgpu = "26.0.1"
 bytemuck = { version = "1", features = ["derive"] }
-vello = "0.5"
+vello = "0.6.0"
 
 # math
 nalgebra = { version = "0.34", features = ["bytemuck"] }
@@ -46,7 +46,7 @@ nalgebra = { version = "0.34", features = ["bytemuck"] }
 image = "0.25"
 
 # font
-glyphon = "0.8"
+glyphon = { git = "https://github.com/grovesNL/glyphon.git", rev="724ab57edbd6c59ba219cd99cf89925d056392db" }
 
 # other
 rand = "0.9"

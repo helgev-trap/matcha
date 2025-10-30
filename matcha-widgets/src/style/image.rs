@@ -311,7 +311,7 @@ impl Style for Image {
         offset: [f32; 2],
         ctx: &WidgetContext,
     ) {
-        let target_size = target.size();
+        let target_size = target.texture_size();
         let target_format = target.format();
         self.with_image(ctx, |texture| {
             let rect: QRect = self.calc_layout(boundary_size, texture, ctx);

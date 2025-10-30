@@ -124,8 +124,7 @@ impl Gpu {
                 compatible_surface: None,
                 force_fallback_adapter: false,
             })
-            .await
-            .ok_or(GpuError::AdapterRequestFailed)?;
+            .await?;
         debug!("Gpu::new: adapter received: {:#?}", adapter.get_info());
 
         // Validate features requested by user are supported by the adapter.
@@ -134,7 +133,7 @@ impl Gpu {
             warn!(
                 "Gpu::new: adapter does not support required features: required={required_features:?} available={adapter_features:?}"
             );
-            return Err(GpuError::AdapterRequestFailed);
+            return Err(GpuError::AdapterFeatureUnsupported);
         }
 
         // Determine limits (use adapter limits if not provided)
@@ -146,15 +145,13 @@ impl Gpu {
 
         // Request device
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: Some("Gpu: request device"),
-                    required_features: features,
-                    required_limits: limits.clone(),
-                    memory_hints: wgpu::MemoryHints::default(),
-                },
-                None,
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Gpu: request device"),
+                required_features: features,
+                required_limits: limits.clone(),
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::Off,
+            })
             .await?;
 
         // Build Arc<Gpu> with cyclic weak reference so callbacks can upgrade to Arc<Gpu>.
@@ -408,8 +405,8 @@ impl Gpu {
                         required_features: arc_self.features,
                         required_limits: arc_self.limits.clone(),
                         memory_hints: wgpu::MemoryHints::default(),
+                        trace: wgpu::Trace::Off,
                     },
-                    None,
                 ));
 
                 match result {
@@ -471,7 +468,9 @@ impl Gpu {
 #[derive(thiserror::Error, Debug)]
 pub enum GpuError {
     #[error("Failed to request adapter")]
-    AdapterRequestFailed,
+    AdapterRequestFailed(#[from] wgpu::RequestAdapterError),
+    #[error("Adapter does not support required features")]
+    AdapterFeatureUnsupported,
     #[error("Failed to request device")]
     DeviceRequestFailed(#[from] wgpu::RequestDeviceError),
 }

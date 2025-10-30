@@ -3,8 +3,14 @@ use nalgebra::Matrix4;
 /// Quantization factor for layout size keys.
 pub const SUB_PIXEL_QUANTIZE: f32 = 256_f32;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QSize([u32; 2]);
+
+impl std::fmt::Debug for QSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "QSize({}, {})", self.width(), self.height())
+    }
+}
 
 impl QSize {
     pub const fn new(width: f32, height: f32) -> Self {
@@ -61,7 +67,7 @@ impl From<&QSize> for [f32; 2] {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QRect {
     origin: [i32; 2],
     size: [i32; 2],
@@ -70,6 +76,19 @@ pub struct QRect {
 impl Default for QRect {
     fn default() -> Self {
         Self::zero()
+    }
+}
+
+impl std::fmt::Debug for QRect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "QRect(origin=({}, {}), size=({}, {}))",
+            self.min_x(),
+            self.min_y(),
+            self.width(),
+            self.height()
+        )
     }
 }
 
@@ -189,12 +208,25 @@ impl QRect {
 
 /// A struct that represents the constraints for a widget's size.
 /// This is passed from parent to child to define the available space.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Constraints {
     min_width: u32,
     max_width: u32,
     min_height: u32,
     max_height: u32,
+}
+
+impl std::fmt::Debug for Constraints {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Constraints(min_width={}, max_width={}, min_height={}, max_height={})",
+            self.min_width(),
+            self.max_width(),
+            self.min_height(),
+            self.max_height()
+        )
+    }
 }
 
 impl Constraints {

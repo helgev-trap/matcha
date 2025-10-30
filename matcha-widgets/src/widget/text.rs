@@ -200,10 +200,6 @@ impl<E: Send + Sync + 'static> Widget<Text, E, ()> for TextWidget {
                             label: Some("Text Render Encoder"),
                         });
 
-                // clear the texture to transparent
-                self.clear
-                    .draw(&mut encoder, &style_region, size, [0.0, 0.0], ctx);
-
                 self.style
                     .draw(&mut encoder, &style_region, size, [0.0, 0.0], ctx);
 

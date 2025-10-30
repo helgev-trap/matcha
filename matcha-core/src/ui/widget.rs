@@ -1,6 +1,6 @@
 use std::{any::Any, sync::Arc};
 
-use log::{trace, warn};
+use log::{debug, trace, warn};
 use parking_lot::Mutex;
 use renderer::render_node::RenderNode;
 use smallvec::SmallVec;
@@ -230,7 +230,9 @@ where
     }
 
     fn log_label(&self) -> &str {
-        self.label.as_deref().unwrap_or("<unnamed>")
+        let label = self.label.as_deref().unwrap_or("<unnamed>");
+        trace!("log_label() called, returning '{}'", label);
+        label
     }
 }
 
@@ -284,9 +286,16 @@ where
     }
 
     fn is_inside(&self, position: [f32; 2], ctx: &WidgetContext) -> bool {
+        let label = self.log_label();
+        trace!(
+            "is_inside start for widget '{}' at position {:?}",
+            label, position
+        );
+
         let cache = self.cache.lock();
 
         let Some((&actual_bounds, arrangement)) = cache.layout.get() else {
+            trace!("is_inside early-exit (no layout) for widget '{}'", label);
             // not rendered yet, cannot process event.
             return false;
         };
@@ -302,8 +311,12 @@ where
             .map(|((c, s), a)| (&**c as &dyn AnyWidget<T>, s, a))
             .collect();
 
-        self.widget_impl
-            .is_inside(actual_bounds, position, &children_triples, ctx)
+        let inside = self
+            .widget_impl
+            .is_inside(actual_bounds, position, &children_triples, ctx);
+
+        trace!("is_inside result for widget '{}': {}", label, inside);
+        inside
     }
 
     fn measure(&self, constraints: &Constraints, ctx: &WidgetContext) -> [f32; 2] {
@@ -313,11 +326,18 @@ where
 
         let label = self.log_label();
         trace!("Measuring widget '{}'", label);
+        debug!(
+            "measure start for widget '{}' constraints={:?} children={}",
+            label,
+            constraints,
+            self.children.len()
+        );
 
         let mut cache = self.cache.lock();
 
         // clear measure cache if rearrange is needed
         if dirty_flags.need_rearrange.take_dirty() {
+            debug!("measure invalidated by need_rearrange for '{}'", label);
             cache.measure.clear();
             // we cannot partially ensure both arrange() and measure() to be called so we need to clear both caches.
             cache.layout.clear();
@@ -326,6 +346,7 @@ where
         // If debug requests recompute each time, clear measure entry before computing so
         // get_or_insert_with will recompute and write into the persistent cache.
         if ctx.debug_config_disable_layout_measure_cache() {
+            debug!("measure cache disabled by debug config for '{}'", label);
             cache.measure.clear();
         }
 
@@ -338,7 +359,7 @@ where
 
             self.widget_impl.measure(constraints, &children, ctx)
         });
-
+        debug!("measure result for widget '{}' -> size={:?}", label, *size);
         *size
     }
 
@@ -403,15 +424,22 @@ where
     ChildSetting: Send + Sync + PartialEq + Clone + 'static,
 {
     fn label(&self) -> Option<&str> {
-        self.label.as_deref()
+        let lbl = self.label.as_deref();
+        trace!(
+            "Accessing label for widget: {:?}",
+            lbl.unwrap_or("<unnamed>")
+        );
+        lbl
     }
 
     fn need_redraw(&self) -> bool {
-        match &self.dirty_flags {
+        let result = match &self.dirty_flags {
             // Not attached to the widget tree yet, assume it needs a draw.
             None => true,
             Some(flags) => flags.need_redraw.is_dirty(),
-        }
+        };
+        trace!("need_redraw for widget '{}': {}", self.log_label(), result);
+        result
     }
 
     async fn update_widget_tree(&mut self, dom: &dyn Dom<T>) -> Result<(), UpdateWidgetError> {
@@ -513,6 +541,10 @@ where
     }
 
     async fn set_model_update_notifier(&self, notifier: &UpdateNotifier) {
+        trace!(
+            "set_model_update_notifier for widget '{}'",
+            self.log_label()
+        );
         // propagate to children
         for (child, _) in &self.children {
             child.set_model_update_notifier(notifier).await;
@@ -526,17 +558,25 @@ where
 
         let label = self.log_label();
         trace!("Arranging widget '{}'", label);
+        debug!(
+            "arrange start for widget '{}' bounds={:?} children={}",
+            label,
+            bounds,
+            self.children.len()
+        );
 
         let mut cache = self.cache.lock();
 
         if dirty_flags.need_rearrange.take_dirty() {
             // arrangement changed, need to redraw
+            debug!("arrange invalidated by need_rearrange for '{}'", label);
             cache.measure.clear();
             cache.layout.clear();
         }
 
         // If debug requests recompute each time, clear the layout entry so get_or_insert_with recomputes and writes.
         if ctx.debug_config_disable_layout_arrange_cache() {
+            debug!("arrange cache disabled by debug config for '{}'", label);
             cache.layout.clear();
         }
 
@@ -567,13 +607,27 @@ where
             },
         );
 
+        // Log result summary
+        if let Some((_q, arrangement)) = cache.layout.get() {
+            if log::log_enabled!(log::Level::Debug) {
+                let count = arrangement.len();
+                let first_size = arrangement.get(0).map(|a| a.size);
+                debug!(
+                    "arrange result for widget '{}' -> children={}, first_size={:?}",
+                    label, count, first_size
+                );
+            }
+        }
+
         // Now that the mutable borrow of layout has ended, clear the render cache if requested.
         if should_clear_render {
+            debug!("evict render cache due to layout eviction for '{}'", label);
             cache.render.clear();
         }
     }
 
     fn update_dirty_flags(&mut self, rearrange_flags: BackPropDirty, redraw_flags: BackPropDirty) {
+        trace!("update_dirty_flags for widget '{}'", self.log_label());
         let dirty_flags = self.dirty_flags.insert(DirtyFlags {
             need_rearrange: rearrange_flags,
             need_redraw: redraw_flags,
@@ -592,6 +646,7 @@ where
     }
 
     fn invalidate_render_cache(&mut self) {
+        trace!("invalidate_render_cache for widget '{}'", self.log_label());
         for (child, _) in &mut self.children {
             child.invalidate_render_cache();
         }

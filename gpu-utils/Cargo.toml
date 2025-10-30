@@ -15,6 +15,7 @@ fxhash = { workspace = true }
 thiserror = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
+bytemuck = { workspace = true }
 
 [lints]
 workspace = true
