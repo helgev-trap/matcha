@@ -77,6 +77,7 @@ where
         new_builder.mouse_primary_button = self.builder.mouse_primary_button;
         new_builder.scroll_pixel_per_line = self.builder.scroll_pixel_per_line;
         new_builder.default_font_size = self.builder.default_font_size;
+        new_builder.debug_config = self.builder.debug_config.clone();
 
         App {
             builder: new_builder,

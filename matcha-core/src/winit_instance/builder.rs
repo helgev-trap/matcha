@@ -202,33 +202,25 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
 
     /// Convenience: toggle measure cache disabling.
     pub fn disable_layout_measure_cache(self, v: bool) -> Self {
-        self.debug_config
-            .disable_layout_measure_cache
-            .store(v, std::sync::atomic::Ordering::Relaxed);
+        self.debug_config.set_disable_layout_measure_cache(v);
         self
     }
 
     /// Convenience: toggle arrange cache disabling.
     pub fn disable_layout_arrange_cache(self, v: bool) -> Self {
-        self.debug_config
-            .disable_layout_arrange_cache
-            .store(v, std::sync::atomic::Ordering::Relaxed);
+        self.debug_config.set_disable_layout_arrange_cache(v);
         self
     }
 
     /// Convenience: toggle render node cache disabling.
     pub fn disable_rendernode_cache(self, v: bool) -> Self {
-        self.debug_config
-            .disable_render_node_cache
-            .store(v, std::sync::atomic::Ordering::Relaxed);
+        self.debug_config.set_disable_render_node_cache(v);
         self
     }
 
     /// Convenience: toggle widget-level cache disabling.
     pub fn always_rebuild_widget(self, v: bool) -> Self {
-        self.debug_config
-            .always_rebuild_widget
-            .store(v, std::sync::atomic::Ordering::Relaxed);
+        self.debug_config.set_always_rebuild_widget(v);
         self
     }
 
