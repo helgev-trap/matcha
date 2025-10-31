@@ -1,24 +1,82 @@
-[package]
-name = "tea-ui"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = [
+    "matcha",
+    "matcha-core",
+    "matcha-widgets",
+    "renderer",
+    "text-render",
+    "utils",
+    "gpu-utils",
+]
+resolver = "3"
 
-[dependencies]
-# runtime
-rayon = "1.10.0"
-pollster = "0.3"
-# graphics
-wgpu = "22.1.0"
-bytemuck = { version = "1.17", features = ["derive"] }
-vello = "0.3.0"
+[workspace.package]
+version = "0.0.5"
+
+[workspace.dependencies]
+# self
+matcha = { path = "matcha" }
+matcha-core = { path = "matcha-core" }
+matcha-widgets = { path = "matcha-widgets" }
+renderer = { path = "renderer" }
+text-render = { path = "text-render" }
+utils = { path = "utils" }
+gpu-utils = { path = "gpu-utils" }
+
+# async runtime, utilities
+tokio = { version = "1", features = [
+    "rt",
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "parking_lot",
+    "time",
+] }
+async-trait = "0.1.88"
+futures = "0.3.31"
+parking_lot = { version = "0.12.3" }
+
+# winit and accessibility
 winit = "0.30"
+accesskit = "0.21"
+accesskit_winit = { version = "0.29", features = ["tokio"] }
+
+# graphics
+wgpu = { version = "26.0.1", features = ["noop"] }
+bytemuck = { version = "1", features = ["derive"] }
+vello = "0.6.0"
+
 # math
-nalgebra = { version = "0.33", features = ["bytemuck"] }
+nalgebra = { version = "0.34", features = ["bytemuck"] }
+
 # image
 image = "0.25"
-# other
-pathfinder_geometry = "0.5.1"
-cosmic-text = "0.12.1"
-rand = "0.8"
-bitflags = "2.6"
 
+# font
+glyphon = { git = "https://github.com/grovesNL/glyphon.git", rev = "724ab57edbd6c59ba219cd99cf89925d056392db" }
+
+# other
+rand = "0.9"
+bitflags = "2.6"
+num = "0.4"
+fxhash = "0.2"
+dashmap = "6.1"
+smallvec = "1.14"
+
+# cache
+# lru = "0.14.0"
+moka = { version = "0.12", features = ["sync"] }
+
+# error handling
+thiserror = "2.0"
+
+# log
+log = "^0.4.28"
+
+# interpolation crate
+# todo: maybe useful.
+# interpolation = "0.3.0"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+type_complexity = "allow"

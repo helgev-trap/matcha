@@ -16,6 +16,7 @@
     "nalgebra",
     "Numpad",
     "onclick",
+    "oneshot",
     "peniko",
     "powf",
     "Rasterizer",

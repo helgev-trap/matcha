@@ -1,0 +1,42 @@
+[package]
+name = "matcha-widgets"
+version = { workspace = true }
+edition = "2024"
+publish = false
+
+[dependencies]
+# matcha
+renderer = { workspace = true }
+matcha-core = { workspace = true }
+utils = { workspace = true }
+gpu-utils = { workspace = true }
+
+# runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+parking_lot = { workspace = true }
+
+# winit
+winit = { workspace = true }
+
+# graphics
+wgpu = { workspace = true }
+bytemuck = { features = ["derive"], workspace = true }
+vello = { workspace = true }
+
+# math
+nalgebra = { features = ["bytemuck"], workspace = true }
+
+# image
+image = { workspace = true }
+
+# other
+num = { workspace = true }
+glyphon = { workspace = true }
+fxhash = { workspace = true }
+dashmap = { workspace = true }
+log = { workspace = true }
+
+[lints]
+workspace = true

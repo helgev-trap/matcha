@@ -1,0 +1,20 @@
+[package]
+name = "renderer"
+edition = "2024"
+version.workspace = true
+
+[dependencies]
+wgpu.workspace = true
+log.workspace = true
+nalgebra.workspace = true
+bytemuck.workspace = true
+thiserror.workspace = true
+gpu-utils = { workspace = true }
+moka.workspace = true
+fxhash.workspace = true
+utils = { workspace = true }
+smallvec = { workspace = true }
+parking_lot.workspace = true
+
+[lints]
+workspace = true
