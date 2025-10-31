@@ -35,6 +35,11 @@ where
         }
     }
 
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
     pub fn top(mut self, top: f32) -> Self {
         self.top = top;
         self

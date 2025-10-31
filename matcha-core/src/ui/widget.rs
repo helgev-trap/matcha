@@ -230,9 +230,7 @@ where
     }
 
     fn log_label(&self) -> &str {
-        let label = self.label.as_deref().unwrap_or("<unnamed>");
-        trace!("log_label() called, returning '{}'", label);
-        label
+        self.label.as_deref().unwrap_or("<unnamed>")
     }
 }
 
@@ -321,6 +319,10 @@ where
 
     fn measure(&self, constraints: &Constraints, ctx: &WidgetContext) -> [f32; 2] {
         let Some(dirty_flags) = &self.dirty_flags else {
+            warn!(
+                "Widget '{}' measure called before dirty flags were initialized. Returning zero size.",
+                self.log_label()
+            );
             return [0.0, 0.0];
         };
 
@@ -366,6 +368,10 @@ where
     // todo: add error type
     fn render(&self, background: Background, ctx: &WidgetContext) -> Arc<RenderNode> {
         let Some(dirty_flags) = &self.dirty_flags else {
+            warn!(
+                "Widget '{}' render called before dirty flags were initialized. Skipping render.",
+                self.log_label()
+            );
             return Arc::new(RenderNode::new());
         };
 
@@ -424,12 +430,7 @@ where
     ChildSetting: Send + Sync + PartialEq + Clone + 'static,
 {
     fn label(&self) -> Option<&str> {
-        let lbl = self.label.as_deref();
-        trace!(
-            "Accessing label for widget: {:?}",
-            lbl.unwrap_or("<unnamed>")
-        );
-        lbl
+        self.label.as_deref()
     }
 
     fn need_redraw(&self) -> bool {
@@ -553,6 +554,10 @@ where
 
     fn arrange(&self, bounds: [f32; 2], ctx: &WidgetContext) {
         let Some(dirty_flags) = &self.dirty_flags else {
+            warn!(
+                "Widget '{}' arrange called before dirty flags were initialized. Skipping arrange.",
+                self.log_label()
+            );
             return;
         };
 
@@ -608,15 +613,15 @@ where
         );
 
         // Log result summary
-        if let Some((_q, arrangement)) = cache.layout.get() {
-            if log::log_enabled!(log::Level::Debug) {
-                let count = arrangement.len();
-                let first_size = arrangement.get(0).map(|a| a.size);
-                debug!(
-                    "arrange result for widget '{}' -> children={}, first_size={:?}",
-                    label, count, first_size
-                );
-            }
+        if let Some((_q, arrangement)) = cache.layout.get()
+            && log::log_enabled!(log::Level::Debug)
+        {
+            let count = arrangement.len();
+            let first_size = arrangement.first().map(|a| a.size);
+            debug!(
+                "arrange result for widget '{}' -> children={}, first_size={:?}",
+                label, count, first_size
+            );
         }
 
         // Now that the mutable borrow of layout has ended, clear the render cache if requested.

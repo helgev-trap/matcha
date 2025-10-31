@@ -322,6 +322,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
 
         {
             // get surface texture, format, viewport size
+            trace!("WindowUi::render: acquiring surface texture");
             let (surface_texture, surface_format, viewport_size) = {
                 let mut window_guard = self.window.upgradable_read();
                 match self.acquire_surface(&mut window_guard, resource) {
@@ -334,21 +335,26 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
 
             // placeholder background
             // TODO: use black transparent texture as root background
+            trace!("WindowUi::render: creating background");
             let background = Background::new(&surface_texture_view, [0.0, 0.0]);
 
+            trace!("WindowUi::render: acquiring widget context");
             let Some(ctx) = resource.widget_context(tokio_handle, &self.window) else {
                 trace!("WindowUi::render: widget context not available, skipping render");
                 return;
             };
 
             // Ensure widget tree is initialized or updated
-            self.ensure_widget_ready(benchmark).await;
+            trace!("WindowUi::render: preparing widget tree");
+            self.ensure_widget_ready(benchmark, &ctx).await;
 
             // Layout and render
+            trace!("WindowUi::render: layout and render");
             let render_node = self
                 .layout_and_render(viewport_size, background, &ctx, benchmark)
                 .await;
 
+            trace!("WindowUi::render: rendering to surface");
             let render_rst = core_renderer.render(
                 &resource.gpu().device(),
                 &resource.gpu().queue(),
@@ -368,6 +374,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
             }
 
             // Present surface via blocking task to avoid blocking async runtime
+            trace!("WindowUi::render: presenting surface");
             tokio::task::spawn_blocking(|| surface_texture.present())
                 .await
                 .expect("present surface task panicked.");
@@ -427,13 +434,19 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
     }
 
     // Ensure widget tree is built or updated as needed
-    async fn ensure_widget_ready(&self, benchmark: &mut utils::benchmark::Benchmark) {
+    async fn ensure_widget_ready(
+        &self,
+        benchmark: &mut utils::benchmark::Benchmark,
+        ctx: &crate::context::WidgetContext,
+    ) {
         let mut widget_lock = self.widget.lock().await;
         let mut model_update_detector_lock = self.model_update_detector.lock().await;
 
-        if widget_lock.is_none() {
+        if widget_lock.is_none() || ctx.debug_config_always_rebuild_widget() {
             // directly build widget tree from dom
-            trace!("WindowUi::render: building widget tree");
+            trace!(
+                "WindowUi::ensure_widget_ready: widget tree not initialized or `always_rebuild_widget` enabled, building widget tree"
+            );
             let dom = benchmark
                 .with_async("create_dom", self.component.view())
                 .await;
@@ -449,7 +462,7 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
             widget.update_dirty_flags(BackPropDirty::new(true), BackPropDirty::new(true));
         } else if model_update_detector_lock.is_true() {
             // Widget update is required
-            trace!("WindowUi::render: updating widget tree");
+            trace!("WindowUi::ensure_widget_ready: model updated, updating widget tree");
             let dom = benchmark
                 .with_async("create_dom", self.component.view())
                 .await;
@@ -490,13 +503,20 @@ impl<Message: 'static, Event: 'static> WindowUi<Message, Event> {
         let constraints: Constraints =
             Constraints::new([0.0, viewport_size[0]], [0.0, viewport_size[1]]);
 
+        trace!("WindowUi::layout_and_render: measuring widget");
         let preferred_size = benchmark.with("layout_measure", || widget.measure(&constraints, ctx));
         let final_size = [
             preferred_size[0].clamp(0.0, viewport_size[0]),
             preferred_size[1].clamp(0.0, viewport_size[1]),
         ];
+        debug!(
+            "WindowUi::layout_and_render: preferred_size={:?}, viewport_size={:?}, final_size={:?}",
+            preferred_size, viewport_size, final_size
+        );
 
+        trace!("WindowUi::layout_and_render: arranging widget");
         benchmark.with("layout_arrange", || widget.arrange(final_size, ctx));
+        trace!("WindowUi::layout_and_render: rendering widget");
         benchmark.with("widget_render", || widget.render(background, ctx))
     }
 
