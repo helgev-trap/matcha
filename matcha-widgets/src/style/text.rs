@@ -193,6 +193,73 @@ impl Text {
             && (self.font_size - desc.font_size).abs() < f32::EPSILON
             && (self.line_height - desc.line_height).abs() < f32::EPSILON
     }
+
+    // Helper used by callers that already hold the necessary locks.
+    // This variant does NOT acquire any glyphon_shared locks itself.
+    fn create_buffer_with_font_system(
+        &self,
+        size: [f32; 2],
+        font_system: &mut glyphon::FontSystem,
+    ) -> glyphon::Buffer {
+        let mut buffer = glyphon::Buffer::new(
+            font_system,
+            glyphon::Metrics::new(self.font_size, self.line_height),
+        );
+        buffer.set_size(font_system, Some(size[0]), Some(size[1]));
+
+        buffer.set_rich_text(
+            font_system,
+            self.texts.iter().map(|e| {
+                (
+                    e.text.as_str(),
+                    glyphon::Attrs {
+                        family: (&e.family).into(),
+                        stretch: e.stretch,
+                        style: e.style,
+                        weight: e.weight,
+                        color_opt: Some({
+                            let c = e.color.to_rgba_u8();
+                            glyphon::Color::rgba(c[0], c[1], c[2], c[3])
+                        }),
+                        // defaults
+                        metadata: 0,
+                        cache_key_flags: glyphon::cosmic_text::CacheKeyFlags::empty(),
+                        metrics_opt: None,
+                        letter_spacing_opt: Some(glyphon::cosmic_text::LetterSpacing(0.0)),
+                        font_features: glyphon::cosmic_text::FontFeatures::default(),
+                    },
+                )
+            }),
+            &glyphon::Attrs::new(),
+            glyphon::cosmic_text::Shaping::Advanced,
+            None,
+        );
+
+        buffer.shape_until_scroll(font_system, false);
+        buffer
+    }
+
+    fn compute_text_area_size(&self, buffer: &glyphon::Buffer) -> [f32; 2] {
+        let (w, h) = get_shaped_buffer_size(buffer);
+        [w, h]
+    }
+
+    fn create_viewport(&self, ctx: &WidgetContext, cache: &glyphon::Cache) -> glyphon::Viewport {
+        glyphon::Viewport::new(&ctx.device(), cache)
+    }
+
+    fn create_text_renderer(
+        &self,
+        text_atlas: &mut glyphon::TextAtlas,
+        ctx: &WidgetContext,
+    ) -> glyphon::TextRenderer {
+        glyphon::TextRenderer::new(
+            text_atlas,
+            &ctx.device(),
+            wgpu::MultisampleState::default(),
+            None,
+        )
+    }
 }
 
 impl Style for Text {
@@ -203,58 +270,25 @@ impl Style for Text {
     ) -> Option<matcha_core::metrics::QRect> {
         let q_size = QSize::from(constraints.max_size());
 
+        let size = constraints.max_size();
+
+        let size = [(size[0] - 10.0).max(0.0), size[1]];
+
+        let glyphon_shared = ctx
+            .any_resource()
+            .get_or_insert_with(|| TextShared::setup(&ctx.device(), &ctx.queue()));
+
+        // Lock only font_system here (required_region only needs shaping info)
+        let mut font_system = glyphon_shared.font_system.lock();
+
         let (_, buffer) = &*self.buffer.get_or_insert_with(&q_size, || {
-            let size = constraints.max_size();
-
-            let glyphon_shared = ctx
-                .any_resource()
-                .get_or_insert_with(|| TextShared::setup(&ctx.device(), &ctx.queue()));
-
-            let mut font_system = glyphon_shared.font_system.lock();
-
-            let mut buffer = glyphon::Buffer::new(
-                &mut font_system,
-                glyphon::Metrics::new(self.font_size, self.line_height),
-            );
-            buffer.set_size(&mut font_system, Some(size[0]), Some(size[1]));
-
-            buffer.set_rich_text(
-                &mut font_system,
-                self.texts.iter().map(|e| {
-                    (
-                        e.text.as_str(),
-                        glyphon::Attrs {
-                            family: (&e.family).into(),
-                            stretch: e.stretch,
-                            style: e.style,
-                            weight: e.weight,
-                            color_opt: Some({
-                                let c = e.color.to_rgba_u8();
-                                glyphon::Color::rgba(c[0], c[1], c[2], c[3])
-                            }),
-                            // defaults
-                            metadata: 0,
-                            cache_key_flags: glyphon::cosmic_text::CacheKeyFlags::empty(),
-                            metrics_opt: None,
-                            letter_spacing_opt: Some(glyphon::cosmic_text::LetterSpacing(0.0)),
-                            font_features: glyphon::cosmic_text::FontFeatures::default(),
-                        },
-                    )
-                }),
-                &glyphon::Attrs::new(),
-                glyphon::cosmic_text::Shaping::Advanced,
-                None,
-            );
-
-            buffer.shape_until_scroll(&mut font_system, false);
-
-            buffer
+            // closure runs while font_system is locked
+            self.create_buffer_with_font_system(size, &mut font_system)
         });
 
-        let (_, text_area_size) = &*self.text_area_size.get_or_insert_with(&q_size, || {
-            let (w, h) = get_shaped_buffer_size(buffer);
-            [w, h]
-        });
+        let (_, text_area_size) = &*self
+            .text_area_size
+            .get_or_insert_with(&q_size, || self.compute_text_area_size(buffer));
 
         Some(matcha_core::metrics::QRect::new(
             [0.0, 0.0],
@@ -272,8 +306,8 @@ impl Style for Text {
     ) {
         // Reuse shaped buffer and renderer where possible. Observe lock order:
         // font_system -> swash_cache -> cache -> text_atlas
-        let size = boundary_size;
-        let q_size = QSize::from(size);
+        let q_size = QSize::from(boundary_size);
+        let size = q_size.size();
 
         let glyphon_shared = ctx
             .any_resource()
@@ -287,12 +321,7 @@ impl Style for Text {
 
         // 2) Obtain or create the buffer (mutable)
         let (_, buffer) = &mut *self.buffer.get_or_insert_with(&q_size, || {
-            let mut b = glyphon::Buffer::new(
-                &mut font_system,
-                glyphon::Metrics::new(self.font_size, self.line_height),
-            );
-            b.set_size(&mut font_system, Some(size[0]), Some(size[1]));
-            b
+            self.create_buffer_with_font_system(size, &mut font_system)
         });
 
         // Ensure buffer size and content reflect the current boundary
@@ -331,7 +360,7 @@ impl Style for Text {
         // viewport resolution should match the render target (region) size so shader NDC math maps correctly
         let (_, viewport) = &mut *self
             .viewport
-            .get_or_insert_with(&q_size, || glyphon::Viewport::new(&ctx.device(), &cache));
+            .get_or_insert_with(&q_size, || self.create_viewport(ctx, &cache));
         viewport.update(
             &ctx.queue(),
             glyphon::Resolution {
@@ -340,14 +369,9 @@ impl Style for Text {
             },
         );
 
-        let (_, text_renderer) = &mut *self.text_renderer.get_or_insert_with(&q_size, || {
-            glyphon::TextRenderer::new(
-                &mut text_atlas,
-                &ctx.device(),
-                wgpu::MultisampleState::default(),
-                None,
-            )
-        });
+        let (_, text_renderer) = &mut *self
+            .text_renderer
+            .get_or_insert_with(&q_size, || self.create_text_renderer(&mut text_atlas, ctx));
 
         // 4) Build TextArea mapped into the target region.
         // Use offset as the top-left position within the target region.
@@ -404,19 +428,12 @@ impl Style for Text {
 
 fn get_shaped_buffer_size(buffer: &glyphon::Buffer) -> (f32, f32) {
     let mut max_width = 0.0f32;
-    let mut lines = 0usize;
+    let mut total_height = 0.0f32;
 
-    // バッファ内のすべての行をループ
-    for line in buffer.lines.iter() {
-        // この行がシェイピング（レイアウト計算）されているか確認
-        if let Some(layout) = line.layout_opt() {
-            for layout_line in layout.iter() {
-                // 各行の幅を取得して最大幅を更新
-                max_width = max_width.max(layout_line.w);
-                lines += 1;
-            }
-        }
+    for run in buffer.layout_runs() {
+        max_width = max_width.max(run.line_w);
+        total_height += run.line_height;
     }
 
-    (max_width, buffer.metrics().line_height * (lines as f32))
+    (max_width, total_height)
 }
