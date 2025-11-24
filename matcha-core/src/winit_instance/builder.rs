@@ -250,7 +250,7 @@ impl<Message: Send + 'static, Event: Send + 'static, B: Backend<Event> + Send + 
         debug!("WinitInstanceBuilder::build: GPU initialized successfully");
 
         // 3) Global resources
-        let resource = crate::context::GlobalResources::new(gpu);
+        let resource = crate::context::GlobalResources::new(gpu, self.debug_config);
         trace!("WinitInstanceBuilder::build: global resources created");
 
         // 4) Create Window UI and apply builder settings

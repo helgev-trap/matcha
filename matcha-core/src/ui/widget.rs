@@ -758,6 +758,231 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct CallCounters {
+        measure: std::sync::atomic::AtomicUsize,
+        arrange: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CallCounters {
+        fn record_measure(&self) {
+            self.measure
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn record_arrange(&self) {
+            self.arrange
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn measure_calls(&self) -> usize {
+            self.measure.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn arrange_calls(&self) -> usize {
+            self.arrange.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[derive(Clone)]
+    struct LeafDom {
+        counters: std::sync::Arc<CallCounters>,
+    }
+
+    #[async_trait::async_trait]
+    impl Dom<()> for LeafDom {
+        fn build_widget_tree(&self) -> Box<dyn AnyWidgetFrame<()>> {
+            Box::new(WidgetFrame::new(
+                Some("leaf".to_string()),
+                vec![],
+                vec![],
+                LeafWidget {
+                    counters: self.counters.clone(),
+                },
+            ))
+        }
+    }
+
+    struct LeafWidget {
+        counters: std::sync::Arc<CallCounters>,
+    }
+
+    impl Widget<LeafDom, (), ()> for LeafWidget {
+        fn update_widget<'a>(
+            &mut self,
+            _dom: &'a LeafDom,
+            _cache_invalidator: Option<InvalidationHandle>,
+        ) -> Vec<(&'a dyn Dom<()>, (), u128)> {
+            vec![]
+        }
+
+        fn device_input(
+            &mut self,
+            _bounds: [f32; 2],
+            _event: &DeviceInput,
+            _children: &mut [(&mut dyn AnyWidget<()>, &mut (), &Arrangement)],
+            _cache_invalidator: InvalidationHandle,
+            _ctx: &WidgetContext,
+        ) -> Option<()> {
+            None
+        }
+
+        fn is_inside(
+            &self,
+            _bounds: [f32; 2],
+            _position: [f32; 2],
+            _children: &[(&dyn AnyWidget<()>, &(), &Arrangement)],
+            _ctx: &WidgetContext,
+        ) -> bool {
+            true
+        }
+
+        fn measure(
+            &self,
+            _constraints: &Constraints,
+            _children: &[(&dyn AnyWidget<()>, &())],
+            _ctx: &WidgetContext,
+        ) -> [f32; 2] {
+            self.counters.record_measure();
+            [25.0, 10.0]
+        }
+
+        fn arrange(
+            &self,
+            bounds: [f32; 2],
+            _children: &[(&dyn AnyWidget<()>, &())],
+            _ctx: &WidgetContext,
+        ) -> Vec<Arrangement> {
+            self.counters.record_arrange();
+            vec![Arrangement::new(bounds, nalgebra::Matrix4::identity())]
+        }
+
+        fn render(
+            &self,
+            _bounds: [f32; 2],
+            _children: &[(&dyn AnyWidget<()>, &(), &Arrangement)],
+            _background: Background,
+            _ctx: &WidgetContext,
+        ) -> RenderNode {
+            RenderNode::new()
+        }
+    }
+
+    #[derive(Clone)]
+    struct ParentDom {
+        parent_counters: std::sync::Arc<CallCounters>,
+        child: LeafDom,
+    }
+
+    #[async_trait::async_trait]
+    impl Dom<()> for ParentDom {
+        fn build_widget_tree(&self) -> Box<dyn AnyWidgetFrame<()>> {
+            Box::new(WidgetFrame::new(
+                Some("parent".to_string()),
+                vec![(self.child.build_widget_tree(), ())],
+                vec![0],
+                ParentWidget {
+                    parent_counters: self.parent_counters.clone(),
+                },
+            ))
+        }
+    }
+
+    struct ParentWidget {
+        parent_counters: std::sync::Arc<CallCounters>,
+    }
+
+    impl Widget<ParentDom, (), ()> for ParentWidget {
+        fn update_widget<'a>(
+            &mut self,
+            dom: &'a ParentDom,
+            _cache_invalidator: Option<InvalidationHandle>,
+        ) -> Vec<(&'a dyn Dom<()>, (), u128)> {
+            vec![(&dom.child as &dyn Dom<()>, (), 0)]
+        }
+
+        fn device_input(
+            &mut self,
+            _bounds: [f32; 2],
+            _event: &DeviceInput,
+            _children: &mut [(&mut dyn AnyWidget<()>, &mut (), &Arrangement)],
+            _cache_invalidator: InvalidationHandle,
+            _ctx: &WidgetContext,
+        ) -> Option<()> {
+            None
+        }
+
+        fn is_inside(
+            &self,
+            _bounds: [f32; 2],
+            _position: [f32; 2],
+            _children: &[(&dyn AnyWidget<()>, &(), &Arrangement)],
+            _ctx: &WidgetContext,
+        ) -> bool {
+            true
+        }
+
+        fn measure(
+            &self,
+            constraints: &Constraints,
+            children: &[(&dyn AnyWidget<()>, &())],
+            ctx: &WidgetContext,
+        ) -> [f32; 2] {
+            self.parent_counters.record_measure();
+            if let Some((child, _)) = children.first() {
+                let _ = child.measure(constraints, ctx);
+            }
+            [constraints.max_width(), constraints.max_height()]
+        }
+
+        fn arrange(
+            &self,
+            bounds: [f32; 2],
+            _children: &[(&dyn AnyWidget<()>, &())],
+            _ctx: &WidgetContext,
+        ) -> Vec<Arrangement> {
+            self.parent_counters.record_arrange();
+            vec![Arrangement::new(bounds, nalgebra::Matrix4::identity())]
+        }
+
+        fn render(
+            &self,
+            _bounds: [f32; 2],
+            _children: &[(&dyn AnyWidget<()>, &(), &Arrangement)],
+            _background: Background,
+            _ctx: &WidgetContext,
+        ) -> RenderNode {
+            RenderNode::new()
+        }
+    }
+
+    #[tokio::test]
+    async fn measure_and_arrange_call_children() {
+        let parent_counters = std::sync::Arc::new(CallCounters::default());
+        let child_counters = std::sync::Arc::new(CallCounters::default());
+
+        let dom = ParentDom {
+            parent_counters: parent_counters.clone(),
+            child: LeafDom {
+                counters: child_counters.clone(),
+            },
+        };
+
+        let mut widget_tree = dom.build_widget_tree();
+        widget_tree.update_dirty_flags(BackPropDirty::new(true), BackPropDirty::new(true));
+
+        let ctx = crate::context::WidgetContext::new_for_tests();
+        let constraints = Constraints::new([0.0, 100.0], [0.0, 80.0]);
+        let size = widget_tree.measure(&constraints, &ctx);
+
+        assert_eq!(parent_counters.measure_calls(), 1);
+        assert_eq!(child_counters.measure_calls(), 1);
+
+        widget_tree.arrange(size, &ctx);
+        assert_eq!(parent_counters.arrange_calls(), 1);
+        assert_eq!(child_counters.arrange_calls(), 1);
+    }
+
     type MockWidgetFrame = WidgetFrame<MockDom, MockWidget, String, MockSetting>;
 
     #[tokio::test]

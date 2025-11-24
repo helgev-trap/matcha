@@ -3,6 +3,7 @@ use std::vec;
 use crate::style::Style;
 
 use matcha_core::context::WidgetContext;
+use matcha_core::metrics::SUB_PIXEL_QUANTIZE;
 use matcha_core::{
     device_input::DeviceInput,
     metrics::{Arrangement, Constraints},
@@ -135,10 +136,10 @@ impl<E: Send + Sync + 'static> Widget<Text, E, ()> for TextWidget {
         ctx: &WidgetContext,
     ) -> [f32; 2] {
         let rect = self.style.required_region(constraints, ctx);
-        if let Some(rect) = rect {
-            [rect.width(), rect.height()]
-        } else {
-            [0.0, 0.0]
+
+        match rect {
+            Some(r) => [r.width(), r.height()],
+            None => unreachable!("Text style always provides required region."),
         }
     }
 
@@ -180,12 +181,59 @@ impl<E: Send + Sync + 'static> Widget<Text, E, ()> for TextWidget {
         ctx: &WidgetContext,
     ) -> RenderNode {
         let mut render_node = RenderNode::new();
+
+        // NOTE: This did not work as expected:
+        // // NOTE:
+        // // It was observed that using the required_region computed during measure as the render
+        // // boundary does not always produce the same layout from cosmic-text; adding a few pixels
+        // // sometimes has no effect. To try to ensure the render produces the same layout as the
+        // // measure pass, the widget currently increases the boundary/texture allocation by a margin
+        // // equal to font_size before allocating the texture. The root cause appears to be internal
+        // // to the library and is unknown; this comment only records the observed behavior and the
+        // // pragmatic workaround.
+        // let bounds = [
+        //     bounds[0] + self.style.font_size / 2.0,
+        //     bounds[1] + self.style.font_size / 2.0,
+        // ];
+
+        // // 上の問題に対処するために、引数として渡された `bounds` に収まる最大のmeasure結果を提供するようなConstraintsを探してcosmic-textへの入力サイズとする
+
+        // let mut current_text_size = bounds;
+        // let size_increment = self.style.font_size / 4.0;
+        // for _ in 0..100 {
+        //     let constraints = Constraints::from_boundary([
+        //         current_text_size[0] + size_increment,
+        //         current_text_size[1] + size_increment,
+        //     ]);
+        //     let Some(measured_size) = self.style.required_region(&constraints, ctx) else {
+        //         unreachable!("Text style always provides required region.");
+        //     };
+
+        //     // 現状は横書きのみに対応
+        //     // 横幅がboundsを超えたらループ終了し、横幅がboundsを超える直前のサイズをrender用に使う
+        //     if measured_size.width() > bounds[0] + 1.0 / SUB_PIXEL_QUANTIZE {
+        //         break;
+        //     }
+
+        //     current_text_size = [
+        //         current_text_size[0] + size_increment,
+        //         current_text_size[1] + size_increment,
+        //     ];
+        // }
+        // let bounds = current_text_size;
+
+        // // 上で決定したboundsに対してレンダリングを行う
+
         let size = <Self as Widget<Text, E, ()>>::measure(
             self,
             &Constraints::from_boundary(bounds),
             &[],
             ctx,
         );
+        let size = [
+            size[0] + self.style.font_size,
+            size[1] + self.style.font_size,
+        ];
 
         if size[0] > 0.0 && size[1] > 0.0 {
             let texture_size = [size[0].ceil() as u32, size[1].ceil() as u32];
