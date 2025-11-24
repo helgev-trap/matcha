@@ -9,8 +9,6 @@ pub(crate) struct DebugConfig {
     disable_render_node_cache: AtomicBool,
 }
 
-
-
 impl Default for DebugConfig {
     fn default() -> Self {
         Self::new(false, false, false, false)
