@@ -31,9 +31,11 @@ nalgebra = { features = ["bytemuck"], workspace = true }
 # image
 image = { workspace = true }
 
+# text
+wgfont = { workspace = true }
+
 # other
 num = { workspace = true }
-glyphon = { workspace = true }
 fxhash = { workspace = true }
 dashmap = { workspace = true }
 log = { workspace = true }

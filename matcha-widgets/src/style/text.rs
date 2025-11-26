@@ -4,9 +4,6 @@ use matcha_core::metrics::QSize;
 use matcha_core::{color::Color, context::WidgetContext};
 use parking_lot::Mutex;
 
-pub use glyphon::cosmic_text::Stretch as TextStretch;
-pub use glyphon::cosmic_text::Style as TextStyle;
-pub use glyphon::cosmic_text::Weight as TextWeight;
 /// Same as `cosmic_text::Family` but without lifetime parameter.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TextFamily {
