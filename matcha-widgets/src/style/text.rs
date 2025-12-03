@@ -112,12 +112,18 @@ impl TextShared {
     }
 }
 
+struct Bitmap {
+    w: usize,
+    h: usize,
+    data: Vec<u8>,
+}
+
 pub struct TextRenderer {
     owned_texts: Vec<OwnedTextSpan>,
-    text_data: RwOption<wgfont::text::TextData>,
+    text_data: RwOption<wgfont::text::TextData<Color>>,
 
-    layout_cache: RwCache<Constraints, wgfont::text::TextLayout>,
-    bitmap_cache: RwCache<QSize, wgfont::renderer::Bitmap>,
+    layout_cache: RwCache<Constraints, wgfont::text::TextLayout<Color>>,
+    bitmap_cache: RwCache<QSize, Bitmap>,
 
     texture_cache: RwCache<QSize, wgpu::Texture>,
 }
@@ -165,7 +171,7 @@ impl TextRenderer {
     fn build_text_data(
         owned_texts: &[OwnedTextSpan],
         font_storage: &mut wgfont::font_storage::FontStorage,
-    ) -> wgfont::text::TextData {
+    ) -> wgfont::text::TextData<Color> {
         let mut text_data = wgfont::text::TextData::new();
 
         for span in owned_texts {
@@ -176,7 +182,7 @@ impl TextRenderer {
                 weight,
                 stretch,
                 style,
-                color: _,
+                color,
             } = span;
 
             let family = families
@@ -204,6 +210,7 @@ impl TextRenderer {
                 font_id,
                 font_size: *size,
                 content: text.clone(),
+                user_data: *color,
             });
         }
 
@@ -212,9 +219,9 @@ impl TextRenderer {
 
     fn build_layout(
         constraints: &Constraints,
-        text_data: &wgfont::text::TextData,
+        text_data: &wgfont::text::TextData<Color>,
         font_storage: &mut wgfont::font_storage::FontStorage,
-    ) -> wgfont::text::TextLayout {
+    ) -> wgfont::text::TextLayout<Color> {
         let max_size = constraints.max_size();
 
         let layout_config = wgfont::text::TextLayoutConfig {
@@ -233,30 +240,52 @@ impl TextRenderer {
     }
 
     fn build_bitmap(
-        text_layout: &wgfont::text::TextLayout,
+        text_layout: &wgfont::text::TextLayout<Color>,
         size: [f32; 2],
         renderer: &mut wgfont::renderer::CpuRenderer,
         font_storage: &mut wgfont::font_storage::FontStorage,
-    ) -> wgfont::renderer::Bitmap {
+    ) -> Bitmap {
+        // in this style implementation, use RgbaU8 as the pixel format
+
+        let size = [size[0].ceil() as usize, size[1].ceil() as usize];
+
+        let mut pixel = vec![0u8; size[0] * size[1] * 4];
+
         renderer.render(
             text_layout,
-            [size[0].ceil() as usize, size[1].ceil() as usize],
-            font_storage,
-        )
+            [size[0], size[1]],
+            font_storage,   
+            &mut |position, lumine, color| {
+                let idx = (position[0] + position[1] * size[0]) * 4;
+                let rgba = color.to_rgba_u8();
+
+                pixel[idx] = pixel[idx].saturating_add(rgba[0]);
+                pixel[idx + 1] = pixel[idx + 1].saturating_add(rgba[1]);
+                pixel[idx + 2] = pixel[idx + 2].saturating_add(rgba[2]);
+                pixel[idx + 3] =
+                    pixel[idx + 3].saturating_add(((rgba[3] as u16 * lumine as u16) / 255) as u8);
+            },
+        );
+
+        Bitmap {
+            w: size[0],
+            h: size[1],
+            data: pixel,
+        }
     }
 
-    fn build_texture(bitmap: &wgfont::renderer::Bitmap, ctx: &WidgetContext) -> wgpu::Texture {
+    fn build_texture(bitmap: &Bitmap, ctx: &WidgetContext) -> wgpu::Texture {
         let texture = ctx.device().create_texture(&wgpu::TextureDescriptor {
             label: Some("text_texture_cache"),
             size: wgpu::Extent3d {
-                width: bitmap.width as u32,
-                height: bitmap.height as u32,
+                width: bitmap.w as u32,
+                height: bitmap.h as u32,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
@@ -269,15 +298,15 @@ impl TextRenderer {
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
-            &bitmap.pixels,
+            &bitmap.data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(bitmap.width as u32),
+                bytes_per_row: Some(bitmap.w as u32 * 4),
                 rows_per_image: None,
             },
             wgpu::Extent3d {
-                width: bitmap.width as u32,
-                height: bitmap.height as u32,
+                width: bitmap.w as u32,
+                height: bitmap.h as u32,
                 depth_or_array_layers: 1,
             },
         );
@@ -397,7 +426,7 @@ impl crate::style::Style for TextRenderer {
                     offset[0] + texture.size().width as f32,
                     offset[1] + texture.size().height as f32,
                 ],
-                color_transformation: Some(COLOR_TRANSFORMATION),
+                color_transformation: None,
                 color_offset: None,
             },
             &ctx.device(),
