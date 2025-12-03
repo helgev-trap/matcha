@@ -39,6 +39,7 @@ num = { workspace = true }
 fxhash = { workspace = true }
 dashmap = { workspace = true }
 log = { workspace = true }
+smallvec = { workspace = true }
 
 [lints]
 workspace = true

@@ -257,6 +257,15 @@ impl Constraints {
         }
     }
 
+    pub fn from_max_q_size(size: QSize) -> Self {
+        Self {
+            min_width: 0,
+            max_width: size.0[0],
+            min_height: 0,
+            max_height: size.0[1],
+        }
+    }
+
     pub fn from_boundary(boundary: [f32; 2]) -> Self {
         if boundary[0] < 0.0 || boundary[1] < 0.0 {
             panic!("Invalid constraints: {boundary:?}");
@@ -272,6 +281,15 @@ impl Constraints {
             max_width: quantized[0],
             min_height: quantized[1],
             max_height: quantized[1],
+        }
+    }
+
+    pub fn from_q_boundary(boundary: QSize) -> Self {
+        Self {
+            min_width: boundary.0[0],
+            max_width: boundary.0[0],
+            min_height: boundary.0[1],
+            max_height: boundary.0[1],
         }
     }
 
