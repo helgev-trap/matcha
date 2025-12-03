@@ -1,12 +1,28 @@
-use crate::style::Style;
+use std::num::NonZeroUsize;
+
 use gpu_utils::texture_atlas::atlas_simple::atlas::AtlasRegion;
-use matcha_core::metrics::QSize;
+use matcha_core::metrics::{Constraints, QSize};
 use matcha_core::{color::Color, context::WidgetContext};
 use parking_lot::Mutex;
 
-/// Same as `cosmic_text::Family` but without lifetime parameter.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub enum TextFamily {
+use utils::cache::RwCache;
+use utils::rwoption::RwOption;
+
+pub use wgfont::fontdb::{Family, Stretch, Style, Weight};
+
+pub struct TextSpan<'a> {
+    pub text: &'a str,
+    pub size: f32,
+    pub families: &'a [wgfont::fontdb::Family<'a>],
+    pub weight: wgfont::fontdb::Weight,
+    pub stretch: wgfont::fontdb::Stretch,
+    pub style: wgfont::fontdb::Style,
+    pub color: Color,
+}
+
+/// Internal use.
+#[derive(Clone, PartialEq)]
+enum OwnedFamily {
     Name(String),
     Serif,
     SansSerif,
@@ -15,282 +31,297 @@ pub enum TextFamily {
     Monospace,
 }
 
-impl From<glyphon::cosmic_text::Family<'_>> for TextFamily {
-    fn from(family: glyphon::cosmic_text::Family) -> Self {
-        match family {
-            glyphon::cosmic_text::Family::Name(name) => TextFamily::Name(name.to_string()),
-            glyphon::cosmic_text::Family::Serif => TextFamily::Serif,
-            glyphon::cosmic_text::Family::SansSerif => TextFamily::SansSerif,
-            glyphon::cosmic_text::Family::Cursive => TextFamily::Cursive,
-            glyphon::cosmic_text::Family::Fantasy => TextFamily::Fantasy,
-            glyphon::cosmic_text::Family::Monospace => TextFamily::Monospace,
-        }
-    }
+/// Internal use.
+#[derive(Clone, PartialEq)]
+struct OwnedTextSpan {
+    text: String,
+    size: f32,
+    families: Vec<OwnedFamily>,
+    weight: wgfont::fontdb::Weight,
+    stretch: wgfont::fontdb::Stretch,
+    style: wgfont::fontdb::Style,
+    color: matcha_core::color::Color,
 }
 
-impl<'a> From<&'a TextFamily> for glyphon::cosmic_text::Family<'a> {
-    fn from(family: &'a TextFamily) -> Self {
-        match family {
-            TextFamily::Name(name) => glyphon::cosmic_text::Family::Name(name.as_str()),
-            TextFamily::Serif => glyphon::cosmic_text::Family::Serif,
-            TextFamily::SansSerif => glyphon::cosmic_text::Family::SansSerif,
-            TextFamily::Cursive => glyphon::cosmic_text::Family::Cursive,
-            TextFamily::Fantasy => glyphon::cosmic_text::Family::Fantasy,
-            TextFamily::Monospace => glyphon::cosmic_text::Family::Monospace,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Sentence {
-    pub text: String,
-    pub color: Color,
-    pub family: TextFamily,
-    pub stretch: TextStretch,
-    pub style: TextStyle,
-    pub weight: TextWeight,
-}
-
-impl Default for Sentence {
-    fn default() -> Self {
+impl From<TextSpan<'_>> for OwnedTextSpan {
+    fn from(span: TextSpan<'_>) -> Self {
         Self {
-            text: String::new(),
-            color: Color::rgb(0, 0, 0),
-            family: TextFamily::SansSerif,
-            stretch: glyphon::cosmic_text::Stretch::Normal,
-            style: glyphon::cosmic_text::Style::Normal,
-            weight: glyphon::cosmic_text::Weight::NORMAL,
+            text: span.text.to_string(),
+            size: span.size,
+            families: span
+                .families
+                .iter()
+                .map(|f| match f {
+                    wgfont::fontdb::Family::Name(name) => OwnedFamily::Name(name.to_string()),
+                    wgfont::fontdb::Family::Serif => OwnedFamily::Serif,
+                    wgfont::fontdb::Family::SansSerif => OwnedFamily::SansSerif,
+                    wgfont::fontdb::Family::Cursive => OwnedFamily::Cursive,
+                    wgfont::fontdb::Family::Fantasy => OwnedFamily::Fantasy,
+                    wgfont::fontdb::Family::Monospace => OwnedFamily::Monospace,
+                })
+                .collect(),
+            weight: span.weight,
+            stretch: span.stretch,
+            style: span.style,
+            color: span.color,
         }
     }
 }
 
-impl Sentence {
-    pub fn new(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            ..Default::default()
-        }
-    }
-
-    pub fn color(mut self, color: Color) -> Self {
-        self.color = color;
-        self
-    }
-
-    pub fn family(mut self, family: TextFamily) -> Self {
-        self.family = family;
-        self
-    }
-
-    pub fn stretch(mut self, stretch: TextStretch) -> Self {
-        self.stretch = stretch;
-        self
-    }
-
-    pub fn style(mut self, style: TextStyle) -> Self {
-        self.style = style;
-        self
-    }
-
-    pub fn weight(mut self, weight: TextWeight) -> Self {
-        self.weight = weight;
-        self
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct TextDesc {
-    pub texts: Vec<Sentence>,
-    pub font_size: f32,
-    pub line_height: f32,
-}
-
-impl TextDesc {
-    pub fn new(texts: Vec<Sentence>) -> Self {
-        Self {
-            texts,
-            font_size: 14.0,
-            line_height: 20.0,
-        }
-    }
-
-    pub fn font_size(mut self, size: f32) -> Self {
-        self.font_size = size;
-        self
-    }
-
-    pub fn line_height(mut self, height: f32) -> Self {
-        self.line_height = height;
-        self
-    }
-
-    pub fn add_element(mut self, text: Sentence) -> Self {
-        self.texts.push(text);
-        self
-    }
-
-    pub fn push_element(&mut self, text: Sentence) {
-        self.texts.push(text);
+impl OwnedTextSpan {
+    fn eq(&self, other: &TextSpan<'_>) -> bool {
+        todo!()
     }
 }
 
 /// **To prevent deadlock, must lock in the order of font_system -> swash_cache -> cache -> text_atlas.**
 struct TextShared {
-    font_system: Mutex<glyphon::FontSystem>,
-    swash_cache: Mutex<glyphon::SwashCache>,
-    cache: Mutex<glyphon::Cache>,
-    text_atlas: Mutex<glyphon::TextAtlas>,
+    font_storage: Mutex<wgfont::font_storage::FontStorage>,
+    cpu_renderer: Mutex<wgfont::renderer::CpuRenderer>,
 }
 
 impl TextShared {
     fn setup(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let font_system = glyphon::FontSystem::new();
-        let swash_cache = glyphon::SwashCache::new();
-        let cache = glyphon::Cache::new(device);
-        let text_atlas =
-            glyphon::TextAtlas::new(device, queue, &cache, wgpu::TextureFormat::Rgba8UnormSrgb);
+        let _ = (device, queue);
+
+        let mut font_storage = wgfont::font_storage::FontStorage::new();
+        font_storage.load_system_fonts();
+
+        #[allow(clippy::unwrap_used)]
+        let cache = wgfont::renderer::cpu_renderer::GlyphCache::new(&[
+            (
+                NonZeroUsize::new(1024).unwrap(),
+                NonZeroUsize::new(512).unwrap(),
+            ),
+            (
+                NonZeroUsize::new(4096).unwrap(),
+                NonZeroUsize::new(128).unwrap(),
+            ),
+            (
+                NonZeroUsize::new(16_384).unwrap(),
+                NonZeroUsize::new(64).unwrap(),
+            ),
+        ]);
+
+        let cpu_renderer = wgfont::renderer::CpuRenderer::new(cache);
 
         Self {
-            font_system: Mutex::new(font_system),
-            swash_cache: Mutex::new(swash_cache),
-            cache: Mutex::new(cache),
-            text_atlas: Mutex::new(text_atlas),
+            font_storage: Mutex::new(font_storage),
+            cpu_renderer: Mutex::new(cpu_renderer),
         }
     }
 }
 
-pub struct Text {
-    // text info
-    pub texts: Vec<Sentence>,
-    pub font_size: f32,
-    pub line_height: f32,
+pub struct TextRenderer {
+    owned_texts: Vec<OwnedTextSpan>,
+    text_data: RwOption<wgfont::text::TextData>,
 
-    // rendering context (needs `wgpu::Device` or `GlyphonShared` so cannot be created in `new()`)
-    buffer: utils::cache::RwCache<QSize, glyphon::Buffer>,
-    text_area_size: utils::cache::RwCache<QSize, [f32; 2]>,
-    viewport: utils::cache::RwCache<QSize, glyphon::Viewport>,
-    text_renderer: utils::cache::RwCache<QSize, glyphon::TextRenderer>,
+    layout_cache: RwCache<Constraints, wgfont::text::TextLayout>,
+    bitmap_cache: RwCache<QSize, wgfont::renderer::Bitmap>,
+
+    texture_cache: RwCache<QSize, wgpu::Texture>,
 }
 
-impl Text {
-    pub fn new(desc: &TextDesc) -> Self {
+impl PartialEq for TextRenderer {
+    fn eq(&self, other: &Self) -> bool {
+        self.owned_texts == other.owned_texts
+    }
+}
+
+impl Clone for TextRenderer {
+    fn clone(&self) -> Self {
         Self {
-            texts: desc.texts.clone(),
-            font_size: desc.font_size,
-            line_height: desc.line_height,
-            buffer: utils::cache::RwCache::new(),
-            text_area_size: utils::cache::RwCache::new(),
-            viewport: utils::cache::RwCache::new(),
-            text_renderer: utils::cache::RwCache::new(),
+            owned_texts: self.owned_texts.clone(),
+            text_data: RwOption::new(),
+            layout_cache: RwCache::new(),
+            bitmap_cache: RwCache::new(),
+            texture_cache: RwCache::new(),
+        }
+    }
+}
+
+impl Default for TextRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TextRenderer {
+    pub fn new() -> Self {
+        Self {
+            owned_texts: Vec::new(),
+            text_data: RwOption::new(),
+            layout_cache: RwCache::new(),
+            bitmap_cache: RwCache::new(),
+            texture_cache: RwCache::new(),
         }
     }
 
-    pub fn eq_desc(&self, desc: &TextDesc) -> bool {
-        self.texts == desc.texts
-            && (self.font_size - desc.font_size).abs() < f32::EPSILON
-            && (self.line_height - desc.line_height).abs() < f32::EPSILON
+    pub fn push_span(&mut self, span: TextSpan<'_>) {
+        let owned_span = OwnedTextSpan::from(span);
+        self.owned_texts.push(owned_span);
     }
 
-    // Helper used by callers that already hold the necessary locks.
-    // This variant does NOT acquire any glyphon_shared locks itself.
-    fn create_buffer_with_font_system(
-        &self,
+    fn build_text_data(
+        owned_texts: &[OwnedTextSpan],
+        font_storage: &mut wgfont::font_storage::FontStorage,
+    ) -> wgfont::text::TextData {
+        let mut text_data = wgfont::text::TextData::new();
+
+        for span in owned_texts {
+            let OwnedTextSpan {
+                text,
+                size,
+                families,
+                weight,
+                stretch,
+                style,
+                color: _,
+            } = span;
+
+            let family = families
+                .iter()
+                .map(|f| match f {
+                    OwnedFamily::Name(name) => wgfont::fontdb::Family::Name(name.as_str()),
+                    OwnedFamily::Serif => wgfont::fontdb::Family::Serif,
+                    OwnedFamily::SansSerif => wgfont::fontdb::Family::SansSerif,
+                    OwnedFamily::Cursive => wgfont::fontdb::Family::Cursive,
+                    OwnedFamily::Fantasy => wgfont::fontdb::Family::Fantasy,
+                    OwnedFamily::Monospace => wgfont::fontdb::Family::Monospace,
+                })
+                .collect::<smallvec::SmallVec<[_; 10]>>();
+
+            let Some((font_id, _)) = font_storage.query(&wgfont::fontdb::Query {
+                families: &family,
+                weight: *weight,
+                stretch: *stretch,
+                style: *style,
+            }) else {
+                todo!();
+            };
+
+            text_data.append(wgfont::text::TextElement {
+                font_id,
+                font_size: *size,
+                content: text.clone(),
+            });
+        }
+
+        text_data
+    }
+
+    fn build_layout(
+        constraints: &Constraints,
+        text_data: &wgfont::text::TextData,
+        font_storage: &mut wgfont::font_storage::FontStorage,
+    ) -> wgfont::text::TextLayout {
+        let max_size = constraints.max_size();
+
+        let layout_config = wgfont::text::TextLayoutConfig {
+            max_width: Some(max_size[0]),
+            max_height: Some(max_size[1]),
+            horizontal_align: wgfont::text::HorizontalAlign::Left,
+            vertical_align: wgfont::text::VerticalAlign::Top,
+            line_height_scale: 1.0,
+            wrap_style: wgfont::text::WrapStyle::WordWrap,
+            wrap_hard_break: false,
+            word_separators: " ".chars().collect(),
+            linebreak_char: ['\n'].into_iter().collect(),
+        };
+
+        text_data.layout(&layout_config, font_storage)
+    }
+
+    fn build_bitmap(
+        text_layout: &wgfont::text::TextLayout,
         size: [f32; 2],
-        font_system: &mut glyphon::FontSystem,
-    ) -> glyphon::Buffer {
-        let mut buffer = glyphon::Buffer::new(
-            font_system,
-            glyphon::Metrics::new(self.font_size, self.line_height),
-        );
-        buffer.set_size(font_system, Some(size[0]), Some(size[1]));
-
-        buffer.set_rich_text(
-            font_system,
-            self.texts.iter().map(|e| {
-                (
-                    e.text.as_str(),
-                    glyphon::Attrs {
-                        family: (&e.family).into(),
-                        stretch: e.stretch,
-                        style: e.style,
-                        weight: e.weight,
-                        color_opt: Some({
-                            let c = e.color.to_rgba_u8();
-                            glyphon::Color::rgba(c[0], c[1], c[2], c[3])
-                        }),
-                        // defaults
-                        metadata: 0,
-                        cache_key_flags: glyphon::cosmic_text::CacheKeyFlags::empty(),
-                        metrics_opt: None,
-                        letter_spacing_opt: Some(glyphon::cosmic_text::LetterSpacing(0.0)),
-                        font_features: glyphon::cosmic_text::FontFeatures::default(),
-                    },
-                )
-            }),
-            &glyphon::Attrs::new(),
-            glyphon::cosmic_text::Shaping::Advanced,
-            None,
-        );
-
-        buffer.shape_until_scroll(font_system, false);
-        buffer
-    }
-
-    fn compute_text_area_size(&self, buffer: &glyphon::Buffer) -> [f32; 2] {
-        let (w, h) = get_shaped_buffer_size(buffer);
-        [w, h]
-    }
-
-    fn create_viewport(&self, ctx: &WidgetContext, cache: &glyphon::Cache) -> glyphon::Viewport {
-        glyphon::Viewport::new(&ctx.device(), cache)
-    }
-
-    fn create_text_renderer(
-        &self,
-        text_atlas: &mut glyphon::TextAtlas,
-        ctx: &WidgetContext,
-    ) -> glyphon::TextRenderer {
-        glyphon::TextRenderer::new(
-            text_atlas,
-            &ctx.device(),
-            wgpu::MultisampleState::default(),
-            None,
+        renderer: &mut wgfont::renderer::CpuRenderer,
+        font_storage: &mut wgfont::font_storage::FontStorage,
+    ) -> wgfont::renderer::Bitmap {
+        renderer.render(
+            text_layout,
+            [size[0].ceil() as usize, size[1].ceil() as usize],
+            font_storage,
         )
     }
+
+    fn build_texture(bitmap: &wgfont::renderer::Bitmap, ctx: &WidgetContext) -> wgpu::Texture {
+        let texture = ctx.device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("text_texture_cache"),
+            size: wgpu::Extent3d {
+                width: bitmap.width as u32,
+                height: bitmap.height as u32,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+
+        let queue = ctx.queue();
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                aspect: wgpu::TextureAspect::All,
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            &bitmap.pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bitmap.width as u32),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: bitmap.width as u32,
+                height: bitmap.height as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        texture
+    }
 }
 
-impl Style for Text {
+impl crate::style::Style for TextRenderer {
     fn required_region(
         &self,
         constraints: &matcha_core::metrics::Constraints,
         ctx: &WidgetContext,
     ) -> Option<matcha_core::metrics::QRect> {
-        let q_size = QSize::from(constraints.max_size());
-
-        let size = constraints.max_size();
-
-        let size = [(size[0] - 10.0).max(0.0), size[1]];
-
-        let glyphon_shared = ctx
+        let shared = ctx
             .any_resource()
             .get_or_insert_with(|| TextShared::setup(&ctx.device(), &ctx.queue()));
 
-        // Lock only font_system here (required_region only needs shaping info)
-        let mut font_system = glyphon_shared.font_system.lock();
+        let TextShared {
+            font_storage,
+            cpu_renderer: _,
+        } = &*shared;
 
-        let (_, buffer) = &*self.buffer.get_or_insert_with(&q_size, || {
-            // closure runs while font_system is locked
-            self.create_buffer_with_font_system(size, &mut font_system)
+        let text_data = self.text_data.get_or_insert_with(|| {
+            let mut font_storage = font_storage.lock();
+            Self::build_text_data(&self.owned_texts, &mut font_storage)
         });
 
-        let (_, text_area_size) = &*self
-            .text_area_size
-            .get_or_insert_with(&q_size, || self.compute_text_area_size(buffer));
+        let text_layout = self.layout_cache.get_or_insert_with(constraints, || {
+            let mut font_storage = shared.font_storage.lock();
+            Self::build_layout(constraints, &text_data, &mut font_storage)
+        });
+        let (_, layout) = &*text_layout;
 
-        Some(matcha_core::metrics::QRect::new(
-            [0.0, 0.0],
-            [text_area_size[0], text_area_size[1]],
-        ))
+        let size = [layout.total_width, layout.total_height];
+
+        // to avoid quantization and rounding errors
+        // todo: find a better way
+        let size = [
+            (size[0] + 0.5).min(constraints.max_width()),
+            (size[1] + 0.5).min(constraints.max_height()),
+        ];
+
+        Some(matcha_core::metrics::QRect::new([0.0, 0.0], size))
     }
 
     fn draw(
@@ -301,136 +332,83 @@ impl Style for Text {
         offset: [f32; 2],
         ctx: &WidgetContext,
     ) {
+        // to avoid rounding errors
+        let boundary_size = [boundary_size[0] + 0.5, boundary_size[1] + 0.5];
+
         // Reuse shaped buffer and renderer where possible. Observe lock order:
         // font_system -> swash_cache -> cache -> text_atlas
         let q_size = QSize::from(boundary_size);
         let size = q_size.size();
 
-        let glyphon_shared = ctx
+        let constraints = Constraints::from_max_q_size(q_size);
+
+        let shared = ctx
             .any_resource()
             .get_or_insert_with(|| TextShared::setup(&ctx.device(), &ctx.queue()));
 
-        // 1) Acquire locks in required order
-        let mut font_system = glyphon_shared.font_system.lock();
-        let mut swash_cache = glyphon_shared.swash_cache.lock();
-        let cache = glyphon_shared.cache.lock();
-        let mut text_atlas = glyphon_shared.text_atlas.lock();
+        let TextShared {
+            font_storage,
+            cpu_renderer: _,
+        } = &*shared;
 
-        // 2) Obtain or create the buffer (mutable)
-        let (_, buffer) = &mut *self.buffer.get_or_insert_with(&q_size, || {
-            self.create_buffer_with_font_system(size, &mut font_system)
+        let text_data = self.text_data.get_or_insert_with(|| {
+            let mut font_storage = font_storage.lock();
+            Self::build_text_data(&self.owned_texts, &mut font_storage)
         });
 
-        // Ensure buffer size and content reflect the current boundary
-        buffer.set_size(&mut font_system, Some(size[0]), Some(size[1]));
-        buffer.set_rich_text(
-            &mut font_system,
-            self.texts.iter().map(|e| {
-                (
-                    e.text.as_str(),
-                    glyphon::Attrs {
-                        family: (&e.family).into(),
-                        stretch: e.stretch,
-                        style: e.style,
-                        weight: e.weight,
-                        color_opt: Some({
-                            let c = e.color.to_rgba_u8();
-                            glyphon::Color::rgba(c[0], c[1], c[2], c[3])
-                        }),
-                        // defaults
-                        metadata: 0,
-                        cache_key_flags: glyphon::cosmic_text::CacheKeyFlags::empty(),
-                        metrics_opt: None,
-                        letter_spacing_opt: None,
-                        font_features: glyphon::cosmic_text::FontFeatures::default(),
-                    },
-                )
-            }),
-            &glyphon::Attrs::new(),
-            glyphon::cosmic_text::Shaping::Advanced,
-            None,
-        );
-        buffer.shape_until_scroll(&mut font_system, false);
+        let text_layout = self.layout_cache.get_or_insert_with(&constraints, || {
+            let mut font_storage = shared.font_storage.lock();
+            Self::build_layout(&constraints, &text_data, &mut font_storage)
+        });
+        let (_, text_layout) = &*text_layout;
 
-        // 3) Prepare viewport and text_renderer, caching them in RwOption to avoid recreation
-        let target_size = target.texture_size();
-        // viewport resolution should match the render target (region) size so shader NDC math maps correctly
-        let (_, viewport) = &mut *self
-            .viewport
-            .get_or_insert_with(&q_size, || self.create_viewport(ctx, &cache));
-        viewport.update(
-            &ctx.queue(),
-            glyphon::Resolution {
-                width: target_size[0],
-                height: target_size[1],
-            },
-        );
+        let bitmap = self.bitmap_cache.get_or_insert_with(&q_size, || {
+            let mut font_storage = shared.font_storage.lock();
+            let mut renderer = shared.cpu_renderer.lock();
 
-        let (_, text_renderer) = &mut *self
-            .text_renderer
-            .get_or_insert_with(&q_size, || self.create_text_renderer(&mut text_atlas, ctx));
+            Self::build_bitmap(text_layout, size, &mut renderer, &mut font_storage)
+        });
+        let (_, bitmap) = &*bitmap;
 
-        // 4) Build TextArea mapped into the target region.
-        // Use offset as the top-left position within the target region.
-        let text_area = glyphon::TextArea {
-            buffer,
-            left: offset[0],
-            top: offset[1],
-            scale: 1.0,
-            bounds: glyphon::TextBounds {
-                left: 0,
-                top: 0,
-                right: target_size[0] as i32,
-                bottom: target_size[1] as i32,
-            },
-            default_color: glyphon::Color::rgba(128, 128, 128, 255),
-            custom_glyphs: &[],
+        let texture = self
+            .texture_cache
+            .get_or_insert_with(&q_size, || Self::build_texture(bitmap, ctx));
+
+        let (_, texture) = &*texture;
+
+        let texture_copy = ctx
+            .any_resource()
+            .get_or_insert_default::<renderer::texture_copy::TextureCopy>();
+
+        let Ok(mut render_pass) = target.begin_render_pass(encoder) else {
+            todo!()
         };
 
-        // 5) Call prepare to ensure glyphs are rasterized into glyphon's atlas and vertex buffer is populated.
-        if text_renderer
-            .prepare(
-                &ctx.device(),
-                &ctx.queue(),
-                &mut font_system,
-                &mut text_atlas,
-                viewport,
-                [text_area],
-                &mut swash_cache,
-            )
-            .is_err()
-        {
-            // On failure (e.g., atlas full) bail out gracefully.
-            return;
-        }
-
-        // 6) Begin a render pass targeting the atlas region and render glyphon content into it.
-        let mut render_pass = match target.begin_render_pass(encoder) {
-            Ok(rp) => rp,
-            Err(_) => return,
-        };
-
-        if text_renderer
-            .render(&text_atlas, viewport, &mut render_pass)
-            .is_err()
-        {
-            // rendering failed, abort
-            return;
-        }
-
-        // 7) Trim atlas usage flags so glyphon can evict unused glyphs later.
-        text_atlas.trim();
+        texture_copy.render(
+            &mut render_pass,
+            renderer::texture_copy::TargetData {
+                target_size: target.texture_size(),
+                target_format: target.format(),
+            },
+            renderer::texture_copy::RenderData {
+                source_texture_view: &texture.create_view(&wgpu::TextureViewDescriptor::default()),
+                source_texture_position_min: offset,
+                source_texture_position_max: [
+                    offset[0] + texture.size().width as f32,
+                    offset[1] + texture.size().height as f32,
+                ],
+                color_transformation: Some(COLOR_TRANSFORMATION),
+                color_offset: None,
+            },
+            &ctx.device(),
+        );
     }
 }
 
-fn get_shaped_buffer_size(buffer: &glyphon::Buffer) -> (f32, f32) {
-    let mut max_width = 0.0f32;
-    let mut total_height = 0.0f32;
-
-    for run in buffer.layout_runs() {
-        max_width = max_width.max(run.line_w);
-        total_height += run.line_height;
-    }
-
-    (max_width, total_height)
-}
+#[rustfmt::skip]
+const COLOR_TRANSFORMATION: nalgebra::Matrix4<f32> = nalgebra::Matrix4::new(
+    1.0, 0.0, 0.0, 0.0,
+    1.0, 0.0, 0.0, 0.0,
+    1.0, 0.0, 0.0, 0.0,
+    1.0, 0.0, 0.0, 1.0,
+);

@@ -1,9 +1,6 @@
 use std::vec;
-
-use crate::style::Style;
-
+use crate::style::Style as _;
 use matcha_core::context::WidgetContext;
-use matcha_core::metrics::SUB_PIXEL_QUANTIZE;
 use matcha_core::{
     device_input::DeviceInput,
     metrics::{Arrangement, Constraints},
@@ -14,23 +11,22 @@ use matcha_core::{
 };
 use renderer::render_node::RenderNode;
 
+pub use crate::style::text::TextSpan;
+pub use crate::style::text::{Family, Stretch, Style, Weight};
+
 // MARK: DOM
 
 pub struct Text {
     label: Option<String>,
 
-    sentence: crate::style::text::Sentence,
-    font_size: f32,
-    line_height: f32,
+    text: crate::style::text::TextRenderer,
 }
 
 impl Text {
-    pub fn new(s: &str) -> Self {
+    pub fn new(label: Option<&str>) -> Self {
         Self {
-            label: None,
-            sentence: crate::style::text::Sentence::new(s),
-            font_size: 14.0,
-            line_height: 20.0,
+            label: label.map(|s| s.to_string()),
+            text: crate::style::text::TextRenderer::new(),
         }
     }
 
@@ -39,38 +35,8 @@ impl Text {
         self
     }
 
-    pub fn color(mut self, color: matcha_core::color::Color) -> Self {
-        self.sentence = self.sentence.color(color);
-        self
-    }
-
-    pub fn family(mut self, family: crate::style::text::TextFamily) -> Self {
-        self.sentence = self.sentence.family(family);
-        self
-    }
-
-    pub fn stretch(mut self, stretch: crate::style::text::TextStretch) -> Self {
-        self.sentence = self.sentence.stretch(stretch);
-        self
-    }
-
-    pub fn style(mut self, style: crate::style::text::TextStyle) -> Self {
-        self.sentence = self.sentence.style(style);
-        self
-    }
-
-    pub fn weight(mut self, weight: crate::style::text::TextWeight) -> Self {
-        self.sentence = self.sentence.weight(weight);
-        self
-    }
-
-    pub fn font_size(mut self, size: f32) -> Self {
-        self.font_size = size;
-        self
-    }
-
-    pub fn line_height(mut self, height: f32) -> Self {
-        self.line_height = height;
+    pub fn push_span(mut self, span: TextSpan) -> Self {
+        self.text.push_span(span);
         self
     }
 }
@@ -78,10 +44,6 @@ impl Text {
 #[async_trait::async_trait]
 impl<T: Send + Sync + 'static> Dom<T> for Text {
     fn build_widget_tree(&self) -> Box<dyn AnyWidgetFrame<T>> {
-        let text_desc = crate::style::text::TextDesc::new(vec![self.sentence.clone()])
-            .font_size(self.font_size)
-            .line_height(self.line_height);
-
         Box::new(WidgetFrame::new(
             self.label.clone(),
             vec![],
@@ -90,7 +52,7 @@ impl<T: Send + Sync + 'static> Dom<T> for Text {
                 clear: crate::style::viewport_clear::ViewportClear {
                     color: matcha_core::color::Color::TRANSPARENT,
                 },
-                style: crate::style::text::Text::new(&text_desc),
+                text: self.text.clone(),
             },
         ))
     }
@@ -100,7 +62,7 @@ impl<T: Send + Sync + 'static> Dom<T> for Text {
 
 pub struct TextWidget {
     clear: crate::style::viewport_clear::ViewportClear,
-    style: crate::style::text::Text,
+    text: crate::style::text::TextRenderer,
 }
 
 impl<E: Send + Sync + 'static> Widget<Text, E, ()> for TextWidget {
@@ -109,21 +71,13 @@ impl<E: Send + Sync + 'static> Widget<Text, E, ()> for TextWidget {
         dom: &'a Text,
         cache_invalidator: Option<InvalidationHandle>,
     ) -> Vec<(&'a dyn Dom<E>, (), u128)> {
-        // Build a TextDesc like Dom::build_widget_tree does and create a new style
-        let text_desc = crate::style::text::TextDesc::new(vec![dom.sentence.clone()])
-            .font_size(dom.font_size)
-            .line_height(dom.line_height);
-
-        let new_style = crate::style::text::Text::new(&text_desc);
-
         // If visible text metrics changed, request relayout
-        if !self.style.eq_desc(&text_desc)
+        if self.text != dom.text
             && let Some(handle) = cache_invalidator
         {
             handle.relayout_next_frame();
+            self.text = dom.text.clone();
         }
-
-        self.style = new_style;
 
         // No children
         vec![]
@@ -135,7 +89,7 @@ impl<E: Send + Sync + 'static> Widget<Text, E, ()> for TextWidget {
         _: &[(&dyn AnyWidget<E>, &())],
         ctx: &WidgetContext,
     ) -> [f32; 2] {
-        let rect = self.style.required_region(constraints, ctx);
+        let rect = self.text.required_region(constraints, ctx);
 
         match rect {
             Some(r) => [r.width(), r.height()],
@@ -170,7 +124,7 @@ impl<E: Send + Sync + 'static> Widget<Text, E, ()> for TextWidget {
         _children: &[(&dyn AnyWidget<E>, &(), &Arrangement)],
         ctx: &WidgetContext,
     ) -> bool {
-        self.style.is_inside(position, bounds, ctx)
+        self.text.is_inside(position, bounds, ctx)
     }
 
     fn render(
@@ -230,10 +184,6 @@ impl<E: Send + Sync + 'static> Widget<Text, E, ()> for TextWidget {
             &[],
             ctx,
         );
-        let size = [
-            size[0] + self.style.font_size,
-            size[1] + self.style.font_size,
-        ];
 
         if size[0] > 0.0 && size[1] > 0.0 {
             let texture_size = [size[0].ceil() as u32, size[1].ceil() as u32];
@@ -248,7 +198,10 @@ impl<E: Send + Sync + 'static> Widget<Text, E, ()> for TextWidget {
                             label: Some("Text Render Encoder"),
                         });
 
-                self.style
+                self.clear
+                    .draw(&mut encoder, &style_region, size, [0.0, 0.0], ctx);
+
+                self.text
                     .draw(&mut encoder, &style_region, size, [0.0, 0.0], ctx);
 
                 ctx.queue().submit(Some(encoder.finish()));
