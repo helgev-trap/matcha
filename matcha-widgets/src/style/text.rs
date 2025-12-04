@@ -68,12 +68,6 @@ impl From<TextSpan<'_>> for OwnedTextSpan {
     }
 }
 
-impl OwnedTextSpan {
-    fn eq(&self, other: &TextSpan<'_>) -> bool {
-        todo!()
-    }
-}
-
 /// **To prevent deadlock, must lock in the order of font_system -> swash_cache -> cache -> text_atlas.**
 struct TextShared {
     font_storage: Mutex<wgfont::font_storage::FontStorage>,
@@ -254,16 +248,42 @@ impl TextRenderer {
         renderer.render(
             text_layout,
             [size[0], size[1]],
-            font_storage,   
+            font_storage,
             &mut |position, lumine, color| {
                 let idx = (position[0] + position[1] * size[0]) * 4;
                 let rgba = color.to_rgba_u8();
 
-                pixel[idx] = pixel[idx].saturating_add(rgba[0]);
-                pixel[idx + 1] = pixel[idx + 1].saturating_add(rgba[1]);
-                pixel[idx + 2] = pixel[idx + 2].saturating_add(rgba[2]);
-                pixel[idx + 3] =
-                    pixel[idx + 3].saturating_add(((rgba[3] as u16 * lumine as u16) / 255) as u8);
+                // Calculate effective source alpha: (lumine * rgba[3]) / 255
+                // Use (x * 257 + 128) >> 16 as a fast approximation for x / 255
+                let src_a = (lumine as u32 * rgba[3] as u32 * 257 + 128) >> 16;
+                if src_a == 0 {
+                    return;
+                }
+
+                let inv_src_a = 255 - src_a;
+
+                // Destination is already premultiplied alpha
+                let dst_r = pixel[idx] as u32;
+                let dst_g = pixel[idx + 1] as u32;
+                let dst_b = pixel[idx + 2] as u32;
+                let dst_a = pixel[idx + 3] as u32;
+
+                // Premultiply source color
+                let src_r = (rgba[0] as u32 * src_a * 257 + 128) >> 16;
+                let src_g = (rgba[1] as u32 * src_a * 257 + 128) >> 16;
+                let src_b = (rgba[2] as u32 * src_a * 257 + 128) >> 16;
+
+                // Blend: src + dst * (1 - src_a)
+                // Since dst is already premultiplied, we just multiply by inv_src_a
+                let out_r = src_r + ((dst_r * inv_src_a * 257 + 128) >> 16);
+                let out_g = src_g + ((dst_g * inv_src_a * 257 + 128) >> 16);
+                let out_b = src_b + ((dst_b * inv_src_a * 257 + 128) >> 16);
+                let out_a = src_a + ((dst_a * inv_src_a * 257 + 128) >> 16);
+
+                pixel[idx] = out_r as u8;
+                pixel[idx + 1] = out_g as u8;
+                pixel[idx + 2] = out_b as u8;
+                pixel[idx + 3] = out_a as u8;
             },
         );
 
@@ -433,11 +453,3 @@ impl crate::style::Style for TextRenderer {
         );
     }
 }
-
-#[rustfmt::skip]
-const COLOR_TRANSFORMATION: nalgebra::Matrix4<f32> = nalgebra::Matrix4::new(
-    1.0, 0.0, 0.0, 0.0,
-    1.0, 0.0, 0.0, 0.0,
-    1.0, 0.0, 0.0, 0.0,
-    1.0, 0.0, 0.0, 1.0,
-);
