@@ -151,6 +151,7 @@ impl Gpu {
                 required_limits: limits.clone(),
                 memory_hints: wgpu::MemoryHints::default(),
                 trace: wgpu::Trace::Off,
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
             })
             .await?;
 
@@ -355,7 +356,7 @@ impl Gpu {
     ///
     /// This uses a boxed handler as required by wgpu.
     fn install_uncaptured_error_handler(device: &wgpu::Device) {
-        device.on_uncaptured_error(Box::new(|err| {
+        device.on_uncaptured_error(Arc::new(|err| {
             error!("gpu-utils: uncaptured wgpu error: {err:?}");
         }));
     }
@@ -406,6 +407,7 @@ impl Gpu {
                         required_limits: arc_self.limits.clone(),
                         memory_hints: wgpu::MemoryHints::default(),
                         trace: wgpu::Trace::Off,
+                        experimental_features: wgpu::ExperimentalFeatures::disabled(),
                     },
                 ));
 

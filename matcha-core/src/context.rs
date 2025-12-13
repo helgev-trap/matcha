@@ -28,7 +28,7 @@ pub struct GlobalResources {
 }
 
 impl GlobalResources {
-    pub fn new(gpu: Arc<Gpu>) -> Self {
+    pub(crate) fn new(gpu: Arc<Gpu>, debug_config: DebugConfig) -> Self {
         debug!(
             "GlobalResources::new: initializing with max_texture_dimension_2d={}",
             gpu.limits().max_texture_dimension_2d
@@ -59,7 +59,7 @@ impl GlobalResources {
         let any_resource = Arc::new(TypeMap::new());
 
         let current_time = Arc::new(RwLock::new(std::time::Instant::now()));
-        let debug_config = Arc::new(RwLock::new(DebugConfig::default()));
+        let debug_config = Arc::new(RwLock::new(debug_config));
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -134,7 +134,6 @@ impl GlobalResources {
         task_executor: &tokio::runtime::Handle,
         window_surface: &Arc<RwLock<WindowSurface>>,
     ) -> Option<WidgetContext> {
-        trace!("GlobalResources::widget_context: creating widget context");
         Some(WidgetContext {
             task_executor: task_executor.clone(),
             window_surface: Arc::downgrade(window_surface),
@@ -156,7 +155,6 @@ impl GlobalResources {
         task_executor: &tokio::runtime::Handle,
         window_surface: &Arc<RwLock<WindowSurface>>,
     ) -> Option<ApplicationContext> {
-        trace!("GlobalResources::application_context: creating application context");
         Some(ApplicationContext {
             task_executor: task_executor.clone(),
             window_surface: Arc::downgrade(window_surface),
@@ -205,9 +203,6 @@ pub struct WidgetContext {
 
 impl WidgetContext {
     pub(crate) fn application_context(&self) -> ApplicationContext {
-        trace!(
-            "WidgetContext::application_context: promoting widget context to application context"
-        );
         ApplicationContext {
             task_executor: self.task_executor.clone(),
             window_surface: self.window_surface.clone(),
@@ -388,7 +383,6 @@ pub(crate) struct AnyConfig {
 impl AnyConfig {
     pub fn new() -> Self {
         let configs = std::collections::HashMap::with_hasher(FxBuildHasher::default());
-        trace!("AnyConfig::new: creating empty nested config store");
         Self { configs }
     }
 
@@ -397,10 +391,6 @@ impl AnyConfig {
     where
         T: Send + Sync + 'static,
     {
-        trace!(
-            "AnyConfig::set: storing config type_id={:?}",
-            std::any::TypeId::of::<T>()
-        );
         self.configs
             .insert(std::any::TypeId::of::<T>(), Arc::new(config));
     }
