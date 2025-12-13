@@ -3,20 +3,21 @@ use std::num::NonZeroUsize;
 use gpu_utils::texture_atlas::atlas_simple::atlas::AtlasRegion;
 use matcha_core::metrics::{Constraints, QSize};
 use matcha_core::{color::Color, context::WidgetContext};
-use parking_lot::Mutex;
 
+use suzuri::font_system::FontSystem;
+use suzuri::renderer::gpu_renderer::GpuCacheConfig;
 use utils::cache::RwCache;
 use utils::rwoption::RwOption;
 
-pub use wgfont::fontdb::{Family, Stretch, Style, Weight};
+pub use suzuri::fontdb::{Family, Stretch, Style, Weight};
 
 pub struct TextSpan<'a> {
     pub text: &'a str,
     pub size: f32,
-    pub families: &'a [wgfont::fontdb::Family<'a>],
-    pub weight: wgfont::fontdb::Weight,
-    pub stretch: wgfont::fontdb::Stretch,
-    pub style: wgfont::fontdb::Style,
+    pub families: &'a [Family<'a>],
+    pub weight: Weight,
+    pub stretch: Stretch,
+    pub style: Style,
     pub color: Color,
 }
 
@@ -37,14 +38,22 @@ struct OwnedTextSpan {
     text: String,
     size: f32,
     families: Vec<OwnedFamily>,
-    weight: wgfont::fontdb::Weight,
-    stretch: wgfont::fontdb::Stretch,
-    style: wgfont::fontdb::Style,
-    color: matcha_core::color::Color,
+    weight: Weight,
+    stretch: Stretch,
+    style: Style,
+    premultiplied_color: [f32; 4],
 }
 
 impl From<TextSpan<'_>> for OwnedTextSpan {
     fn from(span: TextSpan<'_>) -> Self {
+        let straight_color = span.color.to_rgba_f32();
+        let premultiplied_color = [
+            straight_color[0] * straight_color[3],
+            straight_color[1] * straight_color[3],
+            straight_color[2] * straight_color[3],
+            straight_color[3],
+        ];
+
         Self {
             text: span.text.to_string(),
             size: span.size,
@@ -52,73 +61,73 @@ impl From<TextSpan<'_>> for OwnedTextSpan {
                 .families
                 .iter()
                 .map(|f| match f {
-                    wgfont::fontdb::Family::Name(name) => OwnedFamily::Name(name.to_string()),
-                    wgfont::fontdb::Family::Serif => OwnedFamily::Serif,
-                    wgfont::fontdb::Family::SansSerif => OwnedFamily::SansSerif,
-                    wgfont::fontdb::Family::Cursive => OwnedFamily::Cursive,
-                    wgfont::fontdb::Family::Fantasy => OwnedFamily::Fantasy,
-                    wgfont::fontdb::Family::Monospace => OwnedFamily::Monospace,
+                    Family::Name(name) => OwnedFamily::Name(name.to_string()),
+                    Family::Serif => OwnedFamily::Serif,
+                    Family::SansSerif => OwnedFamily::SansSerif,
+                    Family::Cursive => OwnedFamily::Cursive,
+                    Family::Fantasy => OwnedFamily::Fantasy,
+                    Family::Monospace => OwnedFamily::Monospace,
                 })
                 .collect(),
             weight: span.weight,
             stretch: span.stretch,
             style: span.style,
-            color: span.color,
+            premultiplied_color,
         }
     }
 }
 
 /// **To prevent deadlock, must lock in the order of font_system -> swash_cache -> cache -> text_atlas.**
 struct TextShared {
-    font_storage: Mutex<wgfont::font_storage::FontStorage>,
-    cpu_renderer: Mutex<wgfont::renderer::CpuRenderer>,
+    font_system: FontSystem,
 }
 
 impl TextShared {
-    fn setup(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let _ = (device, queue);
+    fn setup(device: &wgpu::Device, _: &wgpu::Queue) -> Self {
+        let font_system = FontSystem::new();
 
-        let mut font_storage = wgfont::font_storage::FontStorage::new();
-        font_storage.load_system_fonts();
+        font_system.load_system_fonts();
 
-        #[allow(clippy::unwrap_used)]
-        let cache = wgfont::renderer::cpu_renderer::GlyphCache::new(&[
-            (
-                NonZeroUsize::new(1024).unwrap(),
-                NonZeroUsize::new(512).unwrap(),
-            ),
-            (
-                NonZeroUsize::new(4096).unwrap(),
-                NonZeroUsize::new(128).unwrap(),
-            ),
-            (
-                NonZeroUsize::new(16_384).unwrap(),
-                NonZeroUsize::new(64).unwrap(),
-            ),
-        ]);
+        font_system.wgpu_init(
+            device,
+            #[allow(clippy::unwrap_used)]
+            &[
+                GpuCacheConfig {
+                    tile_size: NonZeroUsize::new(32).unwrap(),
+                    tiles_per_axis: NonZeroUsize::new(32).unwrap(),
+                    texture_size: NonZeroUsize::new(1024).unwrap(),
+                },
+                GpuCacheConfig {
+                    tile_size: NonZeroUsize::new(64).unwrap(),
+                    tiles_per_axis: NonZeroUsize::new(16).unwrap(),
+                    texture_size: NonZeroUsize::new(1024).unwrap(),
+                },
+                GpuCacheConfig {
+                    tile_size: NonZeroUsize::new(128).unwrap(),
+                    tiles_per_axis: NonZeroUsize::new(8).unwrap(),
+                    texture_size: NonZeroUsize::new(1024).unwrap(),
+                },
+                GpuCacheConfig {
+                    tile_size: NonZeroUsize::new(256).unwrap(),
+                    tiles_per_axis: NonZeroUsize::new(4).unwrap(),
+                    texture_size: NonZeroUsize::new(1024).unwrap(),
+                },
+            ],
+            &[
+                wgpu::TextureFormat::Rgba8Unorm,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+            ],
+        );
 
-        let cpu_renderer = wgfont::renderer::CpuRenderer::new(cache);
-
-        Self {
-            font_storage: Mutex::new(font_storage),
-            cpu_renderer: Mutex::new(cpu_renderer),
-        }
+        Self { font_system }
     }
-}
-
-struct Bitmap {
-    w: usize,
-    h: usize,
-    data: Vec<u8>,
 }
 
 pub struct TextRenderer {
     owned_texts: Vec<OwnedTextSpan>,
-    text_data: RwOption<wgfont::text::TextData<Color>>,
-
-    layout_cache: RwCache<Constraints, wgfont::text::TextLayout<Color>>,
-    bitmap_cache: RwCache<QSize, Bitmap>,
-
+    text_data: RwOption<suzuri::text::TextData<[f32; 4]>>,
+    layout_config: suzuri::text::TextLayoutConfig,
+    layout_cache: RwCache<Constraints, suzuri::text::TextLayout<[f32; 4]>>,
     texture_cache: RwCache<QSize, wgpu::Texture>,
 }
 
@@ -133,8 +142,8 @@ impl Clone for TextRenderer {
         Self {
             owned_texts: self.owned_texts.clone(),
             text_data: RwOption::new(),
+            layout_config: self.layout_config.clone(),
             layout_cache: RwCache::new(),
-            bitmap_cache: RwCache::new(),
             texture_cache: RwCache::new(),
         }
     }
@@ -151,8 +160,8 @@ impl TextRenderer {
         Self {
             owned_texts: Vec::new(),
             text_data: RwOption::new(),
+            layout_config: suzuri::text::TextLayoutConfig::default(),
             layout_cache: RwCache::new(),
-            bitmap_cache: RwCache::new(),
             texture_cache: RwCache::new(),
         }
     }
@@ -162,11 +171,17 @@ impl TextRenderer {
         self.owned_texts.push(owned_span);
     }
 
+    pub fn set_layout_config(&mut self, config: suzuri::text::TextLayoutConfig) {
+        self.layout_config = config;
+    }
+}
+
+impl TextRenderer {
     fn build_text_data(
         owned_texts: &[OwnedTextSpan],
-        font_storage: &mut wgfont::font_storage::FontStorage,
-    ) -> wgfont::text::TextData<Color> {
-        let mut text_data = wgfont::text::TextData::new();
+        font_system: &FontSystem,
+    ) -> suzuri::text::TextData<[f32; 4]> {
+        let mut text_data = suzuri::text::TextData::new();
 
         for span in owned_texts {
             let OwnedTextSpan {
@@ -176,22 +191,22 @@ impl TextRenderer {
                 weight,
                 stretch,
                 style,
-                color,
+                premultiplied_color,
             } = span;
 
             let family = families
                 .iter()
                 .map(|f| match f {
-                    OwnedFamily::Name(name) => wgfont::fontdb::Family::Name(name.as_str()),
-                    OwnedFamily::Serif => wgfont::fontdb::Family::Serif,
-                    OwnedFamily::SansSerif => wgfont::fontdb::Family::SansSerif,
-                    OwnedFamily::Cursive => wgfont::fontdb::Family::Cursive,
-                    OwnedFamily::Fantasy => wgfont::fontdb::Family::Fantasy,
-                    OwnedFamily::Monospace => wgfont::fontdb::Family::Monospace,
+                    OwnedFamily::Name(name) => Family::Name(name.as_str()),
+                    OwnedFamily::Serif => Family::Serif,
+                    OwnedFamily::SansSerif => Family::SansSerif,
+                    OwnedFamily::Cursive => Family::Cursive,
+                    OwnedFamily::Fantasy => Family::Fantasy,
+                    OwnedFamily::Monospace => Family::Monospace,
                 })
                 .collect::<smallvec::SmallVec<[_; 10]>>();
 
-            let Some((font_id, _)) = font_storage.query(&wgfont::fontdb::Query {
+            let Some((font_id, _)) = font_system.query(&suzuri::fontdb::Query {
                 families: &family,
                 weight: *weight,
                 stretch: *stretch,
@@ -200,11 +215,11 @@ impl TextRenderer {
                 todo!();
             };
 
-            text_data.append(wgfont::text::TextElement {
+            text_data.append(suzuri::text::TextElement {
                 font_id,
                 font_size: *size,
                 content: text.clone(),
-                user_data: *color,
+                user_data: *premultiplied_color,
             });
         }
 
@@ -213,123 +228,52 @@ impl TextRenderer {
 
     fn build_layout(
         constraints: &Constraints,
-        text_data: &wgfont::text::TextData<Color>,
-        font_storage: &mut wgfont::font_storage::FontStorage,
-    ) -> wgfont::text::TextLayout<Color> {
+        text_data: &suzuri::text::TextData<[f32; 4]>,
+        font_system: &FontSystem,
+    ) -> suzuri::text::TextLayout<[f32; 4]> {
         let max_size = constraints.max_size();
 
-        let layout_config = wgfont::text::TextLayoutConfig {
+        let layout_config = suzuri::text::TextLayoutConfig {
             max_width: Some(max_size[0]),
             max_height: Some(max_size[1]),
-            horizontal_align: wgfont::text::HorizontalAlign::Left,
-            vertical_align: wgfont::text::VerticalAlign::Top,
+            horizontal_align: suzuri::text::HorizontalAlign::Left,
+            vertical_align: suzuri::text::VerticalAlign::Top,
             line_height_scale: 1.0,
-            wrap_style: wgfont::text::WrapStyle::WordWrap,
+            wrap_style: suzuri::text::WrapStyle::WordWrap,
             wrap_hard_break: false,
             word_separators: " ".chars().collect(),
             linebreak_char: ['\n'].into_iter().collect(),
         };
 
-        text_data.layout(&layout_config, font_storage)
+        font_system.layout_text(text_data, &layout_config)
     }
 
-    fn build_bitmap(
-        text_layout: &wgfont::text::TextLayout<Color>,
-        size: [f32; 2],
-        renderer: &mut wgfont::renderer::CpuRenderer,
-        font_storage: &mut wgfont::font_storage::FontStorage,
-    ) -> Bitmap {
-        // in this style implementation, use RgbaU8 as the pixel format
+    fn build_texture(
+        text_layout: &suzuri::text::TextLayout<[f32; 4]>,
+        font_system: &FontSystem,
+        encoder: &mut wgpu::CommandEncoder,
+        ctx: &WidgetContext,
+    ) -> wgpu::Texture {
+        let device = &ctx.device();
 
-        let size = [size[0].ceil() as usize, size[1].ceil() as usize];
-
-        let mut pixel = vec![0u8; size[0] * size[1] * 4];
-
-        renderer.render(
-            text_layout,
-            [size[0], size[1]],
-            font_storage,
-            &mut |position, lumine, color| {
-                let idx = (position[0] + position[1] * size[0]) * 4;
-                let rgba = color.to_rgba_u8();
-
-                // Calculate effective source alpha: (lumine * rgba[3]) / 255
-                // Use (x * 257 + 128) >> 16 as a fast approximation for x / 255
-                let src_a = (lumine as u32 * rgba[3] as u32 * 257 + 128) >> 16;
-                if src_a == 0 {
-                    return;
-                }
-
-                let inv_src_a = 255 - src_a;
-
-                // Destination is already premultiplied alpha
-                let dst_r = pixel[idx] as u32;
-                let dst_g = pixel[idx + 1] as u32;
-                let dst_b = pixel[idx + 2] as u32;
-                let dst_a = pixel[idx + 3] as u32;
-
-                // Premultiply source color
-                let src_r = (rgba[0] as u32 * src_a * 257 + 128) >> 16;
-                let src_g = (rgba[1] as u32 * src_a * 257 + 128) >> 16;
-                let src_b = (rgba[2] as u32 * src_a * 257 + 128) >> 16;
-
-                // Blend: src + dst * (1 - src_a)
-                // Since dst is already premultiplied, we just multiply by inv_src_a
-                let out_r = src_r + ((dst_r * inv_src_a * 257 + 128) >> 16);
-                let out_g = src_g + ((dst_g * inv_src_a * 257 + 128) >> 16);
-                let out_b = src_b + ((dst_b * inv_src_a * 257 + 128) >> 16);
-                let out_a = src_a + ((dst_a * inv_src_a * 257 + 128) >> 16);
-
-                pixel[idx] = out_r as u8;
-                pixel[idx + 1] = out_g as u8;
-                pixel[idx + 2] = out_b as u8;
-                pixel[idx + 3] = out_a as u8;
-            },
-        );
-
-        Bitmap {
-            w: size[0],
-            h: size[1],
-            data: pixel,
-        }
-    }
-
-    fn build_texture(bitmap: &Bitmap, ctx: &WidgetContext) -> wgpu::Texture {
-        let texture = ctx.device().create_texture(&wgpu::TextureDescriptor {
-            label: Some("text_texture_cache"),
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Text Texture"),
             size: wgpu::Extent3d {
-                width: bitmap.w as u32,
-                height: bitmap.h as u32,
+                width: text_layout.total_width as u32,
+                height: text_layout.total_height as u32,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
 
-        let queue = ctx.queue();
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                aspect: wgpu::TextureAspect::All,
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            &bitmap.data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bitmap.w as u32 * 4),
-                rows_per_image: None,
-            },
-            wgpu::Extent3d {
-                width: bitmap.w as u32,
-                height: bitmap.h as u32,
-                depth_or_array_layers: 1,
-            },
-        );
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        font_system.wgpu_render(text_layout, device, encoder, &texture_view);
 
         texture
     }
@@ -345,19 +289,14 @@ impl crate::style::Style for TextRenderer {
             .any_resource()
             .get_or_insert_with(|| TextShared::setup(&ctx.device(), &ctx.queue()));
 
-        let TextShared {
-            font_storage,
-            cpu_renderer: _,
-        } = &*shared;
+        let TextShared { font_system } = &*shared;
 
-        let text_data = self.text_data.get_or_insert_with(|| {
-            let mut font_storage = font_storage.lock();
-            Self::build_text_data(&self.owned_texts, &mut font_storage)
-        });
+        let text_data = self
+            .text_data
+            .get_or_insert_with(|| Self::build_text_data(&self.owned_texts, font_system));
 
         let text_layout = self.layout_cache.get_or_insert_with(constraints, || {
-            let mut font_storage = shared.font_storage.lock();
-            Self::build_layout(constraints, &text_data, &mut font_storage)
+            Self::build_layout(constraints, &text_data, font_system)
         });
         let (_, layout) = &*text_layout;
 
@@ -387,7 +326,6 @@ impl crate::style::Style for TextRenderer {
         // Reuse shaped buffer and renderer where possible. Observe lock order:
         // font_system -> swash_cache -> cache -> text_atlas
         let q_size = QSize::from(boundary_size);
-        let size = q_size.size();
 
         let constraints = Constraints::from_max_q_size(q_size);
 
@@ -395,33 +333,20 @@ impl crate::style::Style for TextRenderer {
             .any_resource()
             .get_or_insert_with(|| TextShared::setup(&ctx.device(), &ctx.queue()));
 
-        let TextShared {
-            font_storage,
-            cpu_renderer: _,
-        } = &*shared;
+        let TextShared { font_system } = &*shared;
 
-        let text_data = self.text_data.get_or_insert_with(|| {
-            let mut font_storage = font_storage.lock();
-            Self::build_text_data(&self.owned_texts, &mut font_storage)
-        });
+        let text_data = self
+            .text_data
+            .get_or_insert_with(|| Self::build_text_data(&self.owned_texts, font_system));
 
         let text_layout = self.layout_cache.get_or_insert_with(&constraints, || {
-            let mut font_storage = shared.font_storage.lock();
-            Self::build_layout(&constraints, &text_data, &mut font_storage)
+            Self::build_layout(&constraints, &text_data, font_system)
         });
         let (_, text_layout) = &*text_layout;
 
-        let bitmap = self.bitmap_cache.get_or_insert_with(&q_size, || {
-            let mut font_storage = shared.font_storage.lock();
-            let mut renderer = shared.cpu_renderer.lock();
-
-            Self::build_bitmap(text_layout, size, &mut renderer, &mut font_storage)
+        let texture = self.texture_cache.get_or_insert_with(&q_size, || {
+            Self::build_texture(text_layout, font_system, encoder, ctx)
         });
-        let (_, bitmap) = &*bitmap;
-
-        let texture = self
-            .texture_cache
-            .get_or_insert_with(&q_size, || Self::build_texture(bitmap, ctx));
 
         let (_, texture) = &*texture;
 
@@ -430,6 +355,7 @@ impl crate::style::Style for TextRenderer {
             .get_or_insert_default::<renderer::texture_copy::TextureCopy>();
 
         let Ok(mut render_pass) = target.begin_render_pass(encoder) else {
+            log::error!("Failed to begin render pass");
             todo!()
         };
 

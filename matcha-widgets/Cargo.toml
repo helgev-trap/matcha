@@ -32,7 +32,7 @@ nalgebra = { features = ["bytemuck"], workspace = true }
 image = { workspace = true }
 
 # text
-wgfont = { workspace = true }
+suzuri = { workspace = true }
 
 # other
 num = { workspace = true }
