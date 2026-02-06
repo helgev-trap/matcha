@@ -1,4 +1,3 @@
-use std::vec;
 use crate::style::Style as _;
 use matcha_core::context::WidgetContext;
 use matcha_core::{
@@ -10,6 +9,7 @@ use matcha_core::{
     },
 };
 use renderer::render_node::RenderNode;
+use std::vec;
 
 pub use crate::style::text::TextSpan;
 pub use crate::style::text::{Family, Stretch, Style, Weight};
