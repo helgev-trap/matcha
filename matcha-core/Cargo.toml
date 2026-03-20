@@ -17,7 +17,8 @@ futures = { workspace = true }
 parking_lot = { workspace = true }
 
 # winit
-winit = { workspace = true }
+winit = { workspace = true, optional = true }
+baseview = { workspace = true, optional = true }
 
 # graphics
 wgpu = { workspace = true }
@@ -39,6 +40,11 @@ smallvec = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 enum-map = "2.7.3"
+
+[features]
+default = ["winit"]
+winit = ["dep:winit"]
+baseview = ["dep:baseview"]
 
 [lints]
 workspace = true

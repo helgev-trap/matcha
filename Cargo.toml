@@ -36,8 +36,11 @@ async-trait = "0.1.88"
 futures = "0.3.31"
 parking_lot = { version = "0.12.3" }
 
-# winit and accessibility
+# window
 winit = "0.30"
+baseview = { git = "https://github.com/RustAudio/baseview.git" }
+
+# accessibility
 accesskit = "0.21"
 accesskit_winit = { version = "0.29", features = ["tokio"] }
 

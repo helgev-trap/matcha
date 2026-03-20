@@ -4,7 +4,7 @@ pub struct WindowEventState {}
 
 /// A high level window event.
 #[derive(Debug, Clone)]
-pub enum WindowEvent {}
+pub struct WindowEvent {}
 
 impl WindowEventState {
     pub fn new() -> Self {
