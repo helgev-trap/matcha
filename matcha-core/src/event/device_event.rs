@@ -1,6 +1,3 @@
-use std::collections::HashSet;
-use winit::dpi::PhysicalPosition;
-
 /// Stateful processor for raw winit events.
 ///
 /// This struct tracks the state of input devices (mouse, keyboard) for a single window
@@ -21,11 +18,7 @@ impl DeviceEventState {
 impl DeviceEventState {
     /// Process a winit event and update the internal state.
     /// Returns a high level DeviceEvent if the event should be propagated to the UI.
-    pub fn process_event(
-        &mut self,
-        event: &DeviceEvent,
-    ) -> Option<DeviceEvent> {
+    pub fn process_event(&mut self, event: &DeviceEvent) -> Option<DeviceEvent> {
         todo!()
     }
 }
-

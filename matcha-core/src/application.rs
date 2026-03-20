@@ -19,8 +19,7 @@ pub struct Application<BackendMessage: Send + 'static> {
     device_event_state: HashMap<WindowId, DeviceEventState, fxhash::FxBuildHasher>,
     window_event_state: HashMap<WindowId, WindowEventState, fxhash::FxBuildHasher>,
 
-    // winit interface
-    /// winit event loop proxy
+    /// Way to send events to the event loop from outside.
     /// This is ensured to be Some after calling `Application::run()`
     event_loop_proxy: Option<Box<dyn ApplicationLoopProxy<BackendMessage>>>,
 }
@@ -31,6 +30,7 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
         todo!()
     }
 
+    #[cfg(feature = "winit")]
     pub fn run_on_winit(self) -> Result<Self, winit::error::EventLoopError> {
         todo!()
     }
