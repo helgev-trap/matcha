@@ -1,5 +1,19 @@
 use std::sync::Arc;
 
+// Implement WindowControler for Winit EventLoop
+impl super::WindowControler for winit::event_loop::ActiveEventLoop {
+    fn create_native_window(
+        &self,
+        config: &super::WindowConfig,
+        instance: &wgpu::Instance,
+        device: &wgpu::Device,
+    ) -> Result<std::sync::Arc<WindowSurface>, super::WindowError> {
+        let surface = WindowSurface::new(self, config, instance, device)
+            .map_err(|e| super::WindowError::BackendError(e.to_string()))?;
+        Ok(std::sync::Arc::new(surface))
+    }
+}
+
 pub struct WindowSurface {
     window: Arc<winit::window::Window>,
     surface: wgpu::Surface<'static>,
@@ -17,7 +31,7 @@ impl WindowSurface {
         device: &wgpu::Device,
     ) -> Result<Self, WindowSurfaceError> {
         let window = event_loop
-            .create_window(config.window_attributes.clone())
+            .create_window(config.to_winit_attributes())
             .map_err(WindowSurfaceError::CreateWindow)?;
 
         let window = Arc::new(window);
@@ -50,8 +64,9 @@ impl WindowSurface {
         &self.window
     }
 
-    pub fn window_id(&self) -> winit::window::WindowId {
-        self.window.id()
+    pub fn window_id(&self) -> super::WindowId {
+        let u64_id: u64 = self.window.id().into();
+        super::WindowId { id: u64_id as usize }
     }
 
     pub fn surface(&self) -> &wgpu::Surface<'_> {
@@ -196,32 +211,37 @@ impl WindowSurface {
     }
 }
 
-/// window config
 impl WindowSurface {
-    pub fn get_config(&self) -> super::window_config::WindowConfig {
+    pub fn get_config(&self) -> super::WindowConfig {
         let config = self.current_config.lock();
-        let mut window_attributes = winit::window::WindowAttributes::default();
+        use crate::window::window_config::{Position, Size, WindowButtons};
 
-        window_attributes.title = self.window.title();
-        window_attributes.inner_size = Some(winit::dpi::Size::Physical(self.window.inner_size()));
-        if let Ok(pos) = self.window.outer_position() {
-            window_attributes.position = Some(winit::dpi::Position::Physical(pos));
-        }
-        window_attributes.resizable = self.window.is_resizable();
-        window_attributes.enabled_buttons = self.window.enabled_buttons();
-        window_attributes.maximized = self.window.is_maximized();
-        window_attributes.fullscreen = self.window.fullscreen();
-        window_attributes.visible = self.window.is_visible().unwrap_or(true);
-        window_attributes.decorations = self.window.is_decorated();
-        window_attributes.preferred_theme = self.window.theme();
-        window_attributes.resize_increments = self
+        let inner_size = self.window.inner_size();
+        let position = self
             .window
-            .resize_increments()
-            .map(winit::dpi::Size::Physical);
-        window_attributes.active = self.window.has_focus();
+            .outer_position()
+            .ok()
+            .map(|p| Position::Physical { x: p.x, y: p.y });
 
         super::WindowConfig {
-            window_attributes,
+            title: self.window.title(),
+            inner_size: Some(Size::Physical {
+                width: inner_size.width,
+                height: inner_size.height,
+            }),
+            min_inner_size: None, // needs mapping if needed
+            max_inner_size: None,
+            position,
+            resizable: self.window.is_resizable(),
+            enabled_buttons: WindowButtons::ALL, // needs mapping if needed
+            maximized: self.window.is_maximized(),
+            fullscreen: None, // needs mapping if needed
+            visible: self.window.is_visible().unwrap_or(true),
+            transparent: false, // needs mapping
+            decorations: self.window.is_decorated(),
+            preferred_theme: None,
+            resize_increments: None,
+            active: self.window.has_focus(),
             surface_config: config.clone(),
         }
     }

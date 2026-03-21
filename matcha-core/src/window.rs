@@ -1,29 +1,27 @@
 use dashmap::{DashMap, DashSet};
 use fxhash::FxBuildHasher;
-use std::sync::{Arc, Mutex as StdMutex, Weak};
+use std::sync::{Arc, Weak};
 use tokio::sync::Mutex;
 
-mod window_config;
-pub use window_config::WindowConfig;
-mod window_surface;
-use window_surface::WindowSurface;
+pub mod window_config;
+pub use window_config::*;
+
+// --- Backend Abstraction Trait ---
+
+pub trait WindowControler {
+    fn create_native_window(
+        &self,
+        config: &WindowConfig,
+        instance: &wgpu::Instance,
+        device: &wgpu::Device,
+    ) -> Result<Arc<WindowSurface>, WindowError>;
+}
+
+// --- Common Types ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WindowId {
     id: usize,
-}
-
-impl WindowId {
-    pub(crate) fn from_winit(id: winit::window::WindowId) -> Self {
-        let u64_id: u64 = id.into();
-        Self {
-            id: u64_id as usize,
-        }
-    }
-
-    pub(crate) fn to_winit(&self) -> winit::window::WindowId {
-        winit::window::WindowId::from(self.id as u64)
-    }
 }
 
 pub struct WindowManager {
@@ -45,19 +43,13 @@ impl WindowManager {
 impl WindowManager {
     pub fn create_window(
         &self,
-        winit_event_loop: &winit::event_loop::ActiveEventLoop,
+        ctrl: &impl WindowControler,
         config: &WindowConfig,
         instance: &wgpu::Instance,
         device: &wgpu::Device,
     ) -> Result<Window, WindowError> {
-        let window_surface = Arc::new(WindowSurface::new(
-            winit_event_loop,
-            config,
-            instance,
-            device,
-        )?);
+        let window_surface = ctrl.create_native_window(config, instance, device)?;
         let id = window_surface.window_id();
-        let id = WindowId::from_winit(id);
 
         let window_inner = WindowInner {
             config: config.clone(),
@@ -100,7 +92,7 @@ impl WindowManager {
     pub async fn enable_window(
         &self,
         id: WindowId,
-        winit_event_loop: &winit::event_loop::ActiveEventLoop,
+        ctrl: &impl WindowControler,
         instance: &wgpu::Instance,
         device: &wgpu::Device,
     ) -> Result<(), WindowError> {
@@ -115,12 +107,7 @@ impl WindowManager {
             return Ok(()); // Already enabled
         }
 
-        let window_surface = Arc::new(WindowSurface::new(
-            winit_event_loop,
-            &inner.config,
-            instance,
-            device,
-        )?);
+        let window_surface = ctrl.create_native_window(&inner.config, instance, device)?;
 
         // We update the window_surface and keep the original WindowId to not break UiArch.
         inner.window_surface = Some(window_surface);
@@ -131,14 +118,13 @@ impl WindowManager {
 
     pub async fn enable_all_windows(
         &self,
-        winit_event_loop: &winit::event_loop::ActiveEventLoop,
+        ctrl: &impl WindowControler,
         instance: &wgpu::Instance,
         device: &wgpu::Device,
     ) -> Result<(), WindowError> {
         let disabled_ids: Vec<WindowId> = self.disabled_windows.iter().map(|id| *id).collect();
         for id in disabled_ids {
-            self.enable_window(id, winit_event_loop, instance, device)
-                .await?;
+            self.enable_window(id, ctrl, instance, device).await?;
         }
         Ok(())
     }
@@ -158,7 +144,6 @@ impl WindowManager {
         tokio_runtime: &tokio::runtime::Handle,
         if_previous_panicked: Option<impl FnOnce(Box<dyn std::any::Any + Send>) + Send + 'static>,
     ) -> Result<(), wgpu::SurfaceError> {
-        // Clone the Arc to hold the lock independently of the DashMap ref
         let inner_mutex = if let Some(inner) = self.windows.get(&id) {
             inner.clone()
         } else {
@@ -174,7 +159,7 @@ impl WindowManager {
     }
 }
 
-struct WindowInner {
+pub struct WindowInner {
     config: WindowConfig,
     window_surface: Option<Arc<WindowSurface>>,
     renderable: Option<Arc<dyn WindowRenderable>>,
@@ -192,16 +177,13 @@ impl WindowInner {
         >,
     ) -> Result<(), wgpu::SurfaceError> {
         if let Some(handle) = self.render_task_handle.take() {
-            // skip frame if previous frame is not finished
             if !handle.is_finished() {
                 self.render_task_handle = Some(handle);
                 return Ok(());
             }
 
             match handle.await {
-                Ok(Ok(_)) => {
-                    // frame rendered successfully
-                }
+                Ok(Ok(_)) => {}
                 Ok(Err(e)) => {
                     log::error!("Rendering failed: {}", e);
                     return Err(e);
@@ -209,14 +191,6 @@ impl WindowInner {
                 Err(join_error) => {
                     if join_error.is_panic() {
                         let panic = join_error.into_panic();
-                        if let Some(s) = panic.downcast_ref::<&str>() {
-                            log::error!("Render task panicked: {:#?}", s);
-                        } else if let Some(s) = panic.downcast_ref::<String>() {
-                            log::error!("Render task panicked: {:#?}", s);
-                        } else {
-                            log::error!("Render task panicked with unknown error type");
-                        }
-
                         if let Some(handler) = if_previous_panicked {
                             handler(panic);
                         } else {
@@ -246,12 +220,10 @@ impl WindowInner {
                                 });
 
                             let surface_config = window_surface.surface_config();
-                            let physical_size = winit::dpi::PhysicalSize::new(
-                                surface_config.width,
-                                surface_config.height,
-                            );
+                            let width = surface_config.width;
+                            let height = surface_config.height;
 
-                            let scale_factor = 1.0; // TODO: pipe scale factor from somewhere if needed, or use physical_size
+                            let scale_factor = 1.0;
 
                             let mut context = RenderContext {
                                 device: &device,
@@ -259,7 +231,8 @@ impl WindowInner {
                                 encoder: &mut encoder,
                                 view,
                                 target_texture,
-                                physical_size,
+                                width,
+                                height,
                                 scale_factor,
                             };
 
@@ -304,7 +277,8 @@ pub struct RenderContext<'a> {
     pub encoder: &'a mut wgpu::CommandEncoder,
     pub view: &'a wgpu::TextureView,
     pub target_texture: &'a wgpu::Texture,
-    pub physical_size: winit::dpi::PhysicalSize<u32>,
+    pub width: u32,
+    pub height: u32,
     pub scale_factor: f64,
 }
 
@@ -319,8 +293,18 @@ pub trait WindowRenderable: Send + Sync + 'static {
 
 #[derive(Debug, thiserror::Error)]
 pub enum WindowError {
-    #[error("Failed to create window")]
-    CreateWindow(#[from] winit::error::OsError),
-    #[error("Failed to create window surface")]
-    CreateWindowSurface(#[from] window_surface::WindowSurfaceError),
+    #[error("Failed to create window: {0}")]
+    BackendError(String),
+    #[error("Failed to create window surface: {0}")]
+    CreateWindowSurface(#[from] wgpu::CreateSurfaceError),
 }
+
+#[cfg(feature = "winit")]
+mod winit_window;
+#[cfg(feature = "winit")]
+use winit_window::*;
+
+#[cfg(feature = "baseview")]
+mod baseview_window;
+#[cfg(feature = "baseview")]
+use baseview_window::*;
