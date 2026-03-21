@@ -179,7 +179,7 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
 // API type definition
 // -------------------
 
-pub(crate) trait ApplicationControler {}
+pub(crate) trait ApplicationControler: crate::window::WindowControler {}
 
 pub(crate) enum ApplicationCommand {
     Exit,
