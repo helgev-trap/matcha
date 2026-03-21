@@ -3,6 +3,7 @@ use fxhash::FxBuildHasher;
 use std::sync::{Arc, Weak};
 use tokio::sync::Mutex;
 
+use crate::event::{device_event::DeviceEventState, window_event::WindowEventState};
 pub mod window_config;
 pub use window_config::*;
 
@@ -56,6 +57,8 @@ impl WindowManager {
             window_surface: Some(window_surface),
             renderable: None,
             render_task_handle: None,
+            device_event_state: DeviceEventState::new(),
+            window_event_state: WindowEventState::new(),
         };
 
         self.windows.insert(id, Arc::new(Mutex::new(window_inner)));
@@ -157,6 +160,10 @@ impl WindowManager {
             .render_or_skip(device, queue, tokio_runtime, panic_handler)
             .await
     }
+
+    pub(crate) fn get_window_inner(&self, id: WindowId) -> Option<Arc<Mutex<WindowInner>>> {
+        self.windows.get(&id).map(|entry| entry.value().clone())
+    }
 }
 
 pub struct WindowInner {
@@ -164,6 +171,8 @@ pub struct WindowInner {
     window_surface: Option<Arc<WindowSurface>>,
     renderable: Option<Arc<dyn WindowRenderable>>,
     render_task_handle: Option<tokio::task::JoinHandle<Result<Option<()>, wgpu::SurfaceError>>>,
+    pub(crate) device_event_state: DeviceEventState,
+    pub(crate) window_event_state: WindowEventState,
 }
 
 impl WindowInner {
