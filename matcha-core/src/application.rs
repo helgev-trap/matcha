@@ -16,8 +16,6 @@ pub struct Application<BackendMessage: Send + 'static> {
     ui: crate::ui_arch::UiArch<BackendMessage>,
 
     window_manager: WindowManager,
-    device_event_state: HashMap<WindowId, DeviceEventState, fxhash::FxBuildHasher>,
-    window_event_state: HashMap<WindowId, WindowEventState, fxhash::FxBuildHasher>,
 
     /// Way to send events to the event loop from outside.
     /// This is ensured to be Some after calling `Application::run()`
@@ -71,14 +69,13 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        let state = self
-            .window_event_state
-            .entry(window_id)
-            .or_insert_with(|| WindowEventState::new());
-        let event = state.process_event(&event);
+        if let Some(inner_arc) = self.window_manager.get_window_inner(window_id) {
+            let mut inner = inner_arc.blocking_lock();
+            let event = inner.window_event_state.process_event(&event);
 
-        if let Some(event) = event {
-            self.ui.window_event(app_ctrl, window_id, event);
+            if let Some(event) = event {
+                self.ui.window_event(app_ctrl, window_id, event);
+            }
         }
     }
 }
@@ -91,14 +88,13 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
         window_id: WindowId,
         event: DeviceEvent,
     ) {
-        let state = self
-            .device_event_state
-            .entry(window_id)
-            .or_insert_with(|| DeviceEventState::new());
-        let event = state.process_event(&event);
+        if let Some(inner_arc) = self.window_manager.get_window_inner(window_id) {
+            let mut inner = inner_arc.blocking_lock();
+            let event = inner.device_event_state.process_event(&event);
 
-        if let Some(event) = event {
-            self.ui.device_event(app_ctrl, window_id, event);
+            if let Some(event) = event {
+                self.ui.device_event(app_ctrl, window_id, event);
+            }
         }
     }
 }
