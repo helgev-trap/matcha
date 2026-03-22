@@ -9,6 +9,7 @@ use crate::window::{
 
 pub struct WindowManager {
     windows: DashMap<WindowId, Arc<Mutex<Window>>, FxBuildHasher>,
+    handles: DashMap<WindowId, Weak<WindowHandle>, FxBuildHasher>,
     disabled_windows: DashSet<WindowId, FxBuildHasher>,
     weak_self: Weak<Self>,
 }
@@ -17,6 +18,7 @@ impl WindowManager {
     pub fn new() -> Arc<Self> {
         Arc::new_cyclic(|weak_self| Self {
             windows: DashMap::with_hasher(FxBuildHasher::default()),
+            handles: DashMap::with_hasher(FxBuildHasher::default()),
             disabled_windows: DashSet::with_hasher(FxBuildHasher::default()),
             weak_self: weak_self.clone(),
         })
@@ -30,7 +32,7 @@ impl WindowManager {
         config: &WindowConfig,
         instance: &wgpu::Instance,
         device: &wgpu::Device,
-    ) -> Result<WindowHandle, WindowError> {
+    ) -> Result<Arc<WindowHandle>, WindowError> {
         let window_surface = ctrl.create_native_window(config, instance, device)?;
         let id = window_surface.window_id();
 
@@ -39,15 +41,23 @@ impl WindowManager {
         self.windows.insert(id, Arc::new(Mutex::new(window)));
         self.disabled_windows.remove(&id);
 
-        Ok(WindowHandle {
+        let handle = Arc::new(WindowHandle {
             id,
             weak_to_manager: self.weak_self.clone(),
-        })
+        });
+        self.handles.insert(id, Arc::downgrade(&handle));
+
+        Ok(handle)
+    }
+
+    pub fn get_window_handle(&self, id: WindowId) -> Option<Arc<WindowHandle>> {
+        self.handles.get(&id).and_then(|h| h.upgrade())
     }
 
     pub(crate) fn remove_window(&self, id: WindowId) {
         self.windows.remove(&id);
         self.disabled_windows.remove(&id);
+        self.handles.remove(&id);
     }
 
     pub async fn disable_window(&self, id: WindowId) {
@@ -133,9 +143,11 @@ impl Drop for WindowHandle {
 impl WindowHandle {
     pub async fn set_renderable(&self, renderable: impl Into<Arc<dyn WindowRenderable>>) {
         if let Some(manager) = self.weak_to_manager.upgrade() {
-            manager.with_window(self.id, |window: &mut Window| {
-                window.set_renderable(Some(renderable.into()));
-            });
+            manager
+                .with_window(self.id, |window: &mut Window| {
+                    window.set_renderable(Some(renderable.into()));
+                })
+                .await;
         }
     }
 
