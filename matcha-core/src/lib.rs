@@ -3,11 +3,11 @@ compile_error!("feature \"winit\" and feature \"baseview\" cannot be enabled at 
 
 pub mod application;
 pub mod backend;
+pub mod event;
 pub mod renderer;
 pub mod ui_arch;
 pub mod window;
 pub mod window_manager;
-pub mod event;
 
 #[cfg(feature = "winit")]
 pub(crate) mod winit_interface;
