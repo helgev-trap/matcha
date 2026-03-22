@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::event::device_event::{DeviceEvent, DeviceEventState};
 use crate::event::raw_device_event::{RawDeviceEvent, RawDeviceId};
@@ -16,7 +16,7 @@ pub struct Application<BackendMessage: Send + 'static> {
     // ui resources
     ui: crate::ui_arch::UiArch<BackendMessage>,
 
-    window_manager: WindowManager,
+    window_manager: Arc<WindowManager>,
 
     /// Way to send events to the event loop from outside.
     /// This is ensured to be Some after calling `Application::run()`
