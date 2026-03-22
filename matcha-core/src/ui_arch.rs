@@ -6,7 +6,8 @@ use crate::event::device_event::{DeviceEvent, DeviceEventState};
 use crate::event::raw_device_event::{RawDeviceEvent, RawDeviceId};
 use crate::event::window_event::{WindowEvent, WindowEventState};
 
-use crate::window::{WindowConfig, WindowId, WindowManager};
+use crate::window::{WindowConfig, WindowId};
+use crate::window_manager::WindowManager;
 
 pub struct UiArch<BackendMessage> {
     _phantom: std::marker::PhantomData<BackendMessage>,
