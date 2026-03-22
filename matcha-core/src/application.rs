@@ -70,14 +70,15 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        if let Some(inner_arc) = self.window_manager.get_window(window_id) {
-            let mut inner = inner_arc.blocking_lock();
-            let event = inner.window_event_state.process_event(&event);
+        // TODO: reconsider this async / sync boundary
+        self.tokio_runtime
+            .block_on(self.window_manager.with_window(window_id, |window| {
+                let event = window.window_event_state.process_event(&event);
 
-            if let Some(event) = event {
-                self.ui.window_event(app_ctrl, window_id, event);
-            }
-        }
+                if let Some(event) = event {
+                    self.ui.window_event(app_ctrl, window_id, event);
+                }
+            }));
     }
 }
 
@@ -89,14 +90,15 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
         window_id: WindowId,
         event: DeviceEvent,
     ) {
-        if let Some(inner_arc) = self.window_manager.get_window(window_id) {
-            let mut inner = inner_arc.blocking_lock();
-            let event = inner.device_event_state.process_event(&event);
+        // TODO: reconsider this async / sync boundary
+        self.tokio_runtime
+            .block_on(self.window_manager.with_window(window_id, |window| {
+                let event = window.device_event_state.process_event(&event);
 
-            if let Some(event) = event {
-                self.ui.device_event(app_ctrl, window_id, event);
-            }
-        }
+                if let Some(event) = event {
+                    self.ui.device_event(app_ctrl, window_id, event);
+                }
+            }));
     }
 }
 

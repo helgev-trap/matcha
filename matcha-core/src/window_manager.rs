@@ -3,7 +3,9 @@ use fxhash::FxBuildHasher;
 use std::sync::{Arc, Weak};
 use tokio::sync::Mutex;
 
-use crate::window::{Window, WindowId, WindowControler, WindowConfig, WindowError, WindowRenderable};
+use crate::window::{
+    Window, WindowConfig, WindowControler, WindowError, WindowId, WindowRenderable,
+};
 
 pub struct WindowManager {
     windows: DashMap<WindowId, Arc<Mutex<Window>>, FxBuildHasher>,
@@ -105,37 +107,13 @@ impl WindowManager {
         Ok(())
     }
 
-    async fn set_renderable(&self, id: WindowId, renderable: impl Into<Arc<dyn WindowRenderable>>) {
+    pub async fn with_window<R>(&self, id: WindowId, f: impl FnOnce(&mut Window) -> R) -> Option<R> {
         if let Some(inner) = self.windows.get(&id) {
             let mut inner = inner.lock().await;
-            inner.set_renderable(Some(renderable.into()));
-        }
-    }
-
-    pub(crate) async fn render_window(
-        &self,
-        id: WindowId,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        tokio_runtime: &tokio::runtime::Handle,
-        if_previous_panicked: Option<impl FnOnce(Box<dyn std::any::Any + Send>) + Send + 'static>,
-    ) -> Result<(), wgpu::SurfaceError> {
-        let inner_mutex = if let Some(inner) = self.windows.get(&id) {
-            inner.clone()
+            Some(f(&mut inner))
         } else {
-            return Ok(());
-        };
-
-        let panic_handler = if_previous_panicked.map(|f| Box::new(f) as Box<dyn FnOnce(_) + Send>);
-
-        let mut inner = inner_mutex.lock().await;
-        inner
-            .render_or_skip(device, queue, tokio_runtime, panic_handler)
-            .await
-    }
-
-    pub(crate) fn get_window(&self, id: WindowId) -> Option<Arc<Mutex<Window>>> {
-        self.windows.get(&id).map(|entry| entry.value().clone())
+            None
+        }
     }
 }
 
@@ -155,7 +133,9 @@ impl Drop for WindowHandle {
 impl WindowHandle {
     pub async fn set_renderable(&self, renderable: impl Into<Arc<dyn WindowRenderable>>) {
         if let Some(manager) = self.weak_to_manager.upgrade() {
-            manager.set_renderable(self.id, renderable).await;
+            manager.with_window(self.id, |window: &mut Window| {
+                window.set_renderable(Some(renderable.into()));
+            });
         }
     }
 

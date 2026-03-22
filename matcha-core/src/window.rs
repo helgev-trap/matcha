@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use crate::event::{device_event::DeviceEventState, window_event::WindowEventState};
+use std::sync::Arc;
 
 pub mod window_config;
 pub use window_config::*;
@@ -23,10 +23,16 @@ pub struct WindowId {
 }
 
 pub struct Window {
+    // window
     config: WindowConfig,
     window_surface: Option<Arc<WindowSurface>>,
     renderable: Option<Arc<dyn WindowRenderable>>,
+
+    // render task
     render_task_handle: Option<tokio::task::JoinHandle<Result<Option<()>, wgpu::SurfaceError>>>,
+
+    // event states
+    // TODO: use methods instead of public fields
     pub(crate) device_event_state: DeviceEventState,
     pub(crate) window_event_state: WindowEventState,
 }
@@ -64,9 +70,7 @@ impl Window {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         tokio_runtime: &tokio::runtime::Handle,
-        if_previous_panicked: Option<
-            Box<dyn FnOnce(Box<dyn std::any::Any + Send>) + Send + 'static>,
-        >,
+        if_previous_panicked: Option<impl FnOnce(Box<dyn std::any::Any + Send>) + Send + 'static>,
     ) -> Result<(), wgpu::SurfaceError> {
         if let Some(handle) = self.render_task_handle.take() {
             if !handle.is_finished() {
@@ -83,10 +87,10 @@ impl Window {
                 Err(join_error) => {
                     if join_error.is_panic() {
                         let panic = join_error.into_panic();
-                        if let Some(handler) = if_previous_panicked {
-                            handler(panic);
-                        } else {
-                            std::panic::resume_unwind(panic);
+
+                        match if_previous_panicked {
+                            Some(handler) => handler(panic),
+                            None => std::panic::resume_unwind(panic),
                         }
                     }
                 }
