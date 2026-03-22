@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use crate::event::device_event::{DeviceEvent, DeviceEventState};
 use crate::event::raw_device_event::{RawDeviceEvent, RawDeviceId};
 use crate::event::window_event::{WindowEvent, WindowEventState};
-use crate::window::{WindowId, WindowManager};
+use crate::window::WindowId;
+use crate::window_manager::WindowManager;
 
 pub struct Application<BackendMessage: Send + 'static> {
     // runtime
@@ -69,7 +70,7 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        if let Some(inner_arc) = self.window_manager.get_window_inner(window_id) {
+        if let Some(inner_arc) = self.window_manager.get_window(window_id) {
             let mut inner = inner_arc.blocking_lock();
             let event = inner.window_event_state.process_event(&event);
 
@@ -88,7 +89,7 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
         window_id: WindowId,
         event: DeviceEvent,
     ) {
-        if let Some(inner_arc) = self.window_manager.get_window_inner(window_id) {
+        if let Some(inner_arc) = self.window_manager.get_window(window_id) {
             let mut inner = inner_arc.blocking_lock();
             let event = inner.device_event_state.process_event(&event);
 
