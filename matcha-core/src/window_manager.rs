@@ -117,7 +117,11 @@ impl WindowManager {
         Ok(())
     }
 
-    pub async fn with_window<R>(&self, id: WindowId, f: impl FnOnce(&mut Window) -> R) -> Option<R> {
+    pub async fn with_window<R>(
+        &self,
+        id: WindowId,
+        f: impl FnOnce(&mut Window) -> R,
+    ) -> Option<R> {
         if let Some(inner) = self.windows.get(&id) {
             let mut inner = inner.lock().await;
             Some(f(&mut inner))

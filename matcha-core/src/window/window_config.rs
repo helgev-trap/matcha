@@ -41,10 +41,7 @@ impl From<[i32; 2]> for Position {
 
 impl From<(i32, i32)> for Position {
     fn from(pos: (i32, i32)) -> Self {
-        Self::Physical {
-            x: pos.0,
-            y: pos.1,
-        }
+        Self::Physical { x: pos.0, y: pos.1 }
     }
 }
 
@@ -264,12 +261,8 @@ impl From<Size> for winit::dpi::Size {
 impl From<Position> for winit::dpi::Position {
     fn from(pos: Position) -> Self {
         match pos {
-            Position::Physical { x, y } => {
-                Self::Physical(winit::dpi::PhysicalPosition::new(x, y))
-            }
-            Position::Logical { x, y } => {
-                Self::Logical(winit::dpi::LogicalPosition::new(x, y))
-            }
+            Position::Physical { x, y } => Self::Physical(winit::dpi::PhysicalPosition::new(x, y)),
+            Position::Logical { x, y } => Self::Logical(winit::dpi::LogicalPosition::new(x, y)),
         }
     }
 }

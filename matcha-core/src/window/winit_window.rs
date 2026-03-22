@@ -66,7 +66,9 @@ impl WindowSurface {
 
     pub fn window_id(&self) -> super::WindowId {
         let u64_id: u64 = self.window.id().into();
-        super::WindowId { id: u64_id as usize }
+        super::WindowId {
+            id: u64_id as usize,
+        }
     }
 
     pub fn surface(&self) -> &wgpu::Surface<'_> {
