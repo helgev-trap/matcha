@@ -52,9 +52,7 @@ pub trait Widget<T: 'static>: Send + Sync + Any {
 
     fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn WidgetContext) -> [f32; 2];
 
-    fn render(&self, bounds: [f32; 2], ctx: &dyn WidgetContext) -> RenderNode;
-
-    fn children(&self) -> &[&WidgetPod<T>];
+    fn render(&mut self, bounds: [f32; 2], ctx: &dyn WidgetContext) -> RenderNode;
 }
 
 /// Wrapper trait to erase generic type T from Widget trait.
@@ -67,9 +65,7 @@ pub(super) trait AnyWidget<T>: Send + Sync + Any {
 
     fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn WidgetContext) -> [f32; 2];
 
-    fn render(&self, bounds: [f32; 2], /* TODO: background: Background, */ ctx: &dyn WidgetContext) -> RenderNode;
-
-    fn children(&self) -> &[&WidgetPod<T>];
+    fn render(&mut self, bounds: [f32; 2], /* TODO: background: Background, */ ctx: &dyn WidgetContext) -> RenderNode;
 }
 
 impl<W, V, T: 'static> AnyWidget<T> for W
@@ -97,12 +93,8 @@ where
         Widget::measure(self, constraints, ctx)
     }
 
-    fn render(&self, bounds: [f32; 2], ctx: &dyn WidgetContext) -> RenderNode {
+    fn render(&mut self, bounds: [f32; 2], ctx: &dyn WidgetContext) -> RenderNode {
         Widget::render(self, bounds, ctx)
-    }
-
-    fn children(&self) -> &[&WidgetPod<T>] {
-        Widget::children(self)
     }
 }
 
@@ -155,7 +147,7 @@ impl<T: 'static> WidgetPod<T> {
         self.widget.try_update(view)
     }
 
-    pub fn device_input(&mut self, bounds: [f32; 2], event: &DeviceEvent, ctx: &dyn WidgetContext) -> Option<T> {
+    pub fn device_input(&mut self, bounds: [f32; 2], event: &DeviceEvent, ctx: &dyn WidgetContext) -> (Option<T>, WidgetInteractionResult) {
         let (event, interaction_result) = self.widget.device_input(bounds, event, ctx);
 
         match interaction_result {
@@ -168,7 +160,7 @@ impl<T: 'static> WidgetPod<T> {
             WidgetInteractionResult::NoChange => {}
         }
 
-        event
+        (event, interaction_result)
     }
 
     pub fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn WidgetContext) -> bool {
