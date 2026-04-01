@@ -9,9 +9,21 @@ use crate::event::window_event::{WindowEvent, WindowEventState};
 use crate::window::{WindowConfig, WindowId};
 use crate::window_manager::WindowManager;
 
-pub mod metrics;
 pub mod component;
+pub mod metrics;
+pub mod update_flag;
 pub mod widget;
+
+// -------
+// Globals
+// -------
+
+/// Initial value is true to force the first rendering.
+static COMPONENT_RE_VIEW_NEEDED: update_flag::UpdateFlags = update_flag::UpdateFlags::new_true();
+
+// ------
+// UiArch
+// ------
 
 pub struct UiArch<BackendMessage> {
     _phantom: std::marker::PhantomData<BackendMessage>,
