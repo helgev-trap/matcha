@@ -123,6 +123,11 @@ impl<T> WidgetPod<T> {
         }
     }
 
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
     pub fn id_hash(&self) -> usize {
         self.id_hash
     }
@@ -133,11 +138,11 @@ impl<T> WidgetPod<T> {
         self.label.as_deref()
     }
 
-    fn need_redraw(&self) -> bool {
+    pub fn need_redraw(&self) -> bool {
         self.render_cache.is_none()
     }
 
-    fn invalidate_render_cache(&mut self) {
+    pub fn invalidate_render_cache(&mut self) {
         self.render_cache = None;
     }
 }
