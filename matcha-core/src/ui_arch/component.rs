@@ -1,13 +1,12 @@
 use std::{collections::HashMap, future::Future, sync::Arc};
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use renderer::RenderNode;
-use tokio::sync::mpsc;
 
 use super::widget::{View, Widget, WidgetContext, WidgetInteractionResult, WidgetPod};
 use crate::{
     event::device_event::DeviceEvent,
-    ui_arch::{metrics, update_flag::WakeupHandle, widget::WidgetUpdateError},
+    ui_arch::{metrics, widget::WidgetUpdateError},
 };
 
 // ----------------------------------------------------------------------------
@@ -16,33 +15,28 @@ use crate::{
 
 /// Manages background tasks spawned by a [`Component`].
 ///
-/// Passed as `&mut TaskHandler<C::Message>` to each [`Component`] method. Tasks spawned
-/// via [`TaskHandler::spawn_msg`] deliver their return value as a `Message` to
-/// [`Component::update`] when they complete.
-pub struct TaskHandler<Message: Send + 'static> {
+/// Passed as `&mut TaskHandler` to each [`Component`] method.
+///
+/// Tasks write UI state directly via [`SharedValue::store()`](shared_buffer::SharedValue::store),
+/// which automatically signals the event loop. Discrete commands from external
+/// sources are delivered through [`Component::update()`].
+pub struct TaskHandler {
     tasks: HashMap<String, tokio::task::JoinHandle<()>>,
-    /// Both ends of the message channel live here.
-    /// Sender is cloned per-task; receiver is drained by [`ComponentPod::poll_messages`]
-    /// through the Mutex guard.
-    message_tx: mpsc::UnboundedSender<Message>,
-    message_rx: mpsc::UnboundedReceiver<Message>,
-    wakeup: WakeupHandle,
 }
 
-impl<Message: Send + 'static> TaskHandler<Message> {
-    fn new(wakeup: WakeupHandle) -> Self {
-        let (tx, rx) = mpsc::unbounded_channel();
+impl TaskHandler {
+    pub(crate) fn new() -> Self {
         Self {
             tasks: HashMap::new(),
-            message_tx: tx,
-            message_rx: rx,
-            wakeup,
         }
     }
 
-    /// Spawn a fire-and-forget background task (no return value).
+    /// Spawns a fire-and-forget background task.
     ///
-    /// Returns [`TaskError::AlreadyExists`] if a task with the same `id` is already running.
+    /// The task writes UI state by calling
+    /// [`SharedValue::store()`](shared_buffer::SharedValue::store) directly.
+    ///
+    /// Returns [`TaskError::AlreadyExists`] if a task with the same `id` is running.
     pub fn spawn<F, Fut>(&mut self, id: impl Into<String>, task: F) -> Result<(), TaskError>
     where
         F: FnOnce() -> Fut,
@@ -57,41 +51,7 @@ impl<Message: Send + 'static> TaskHandler<Message> {
         Ok(())
     }
 
-    /// Spawn a background task whose return value is delivered as a [`Component::update`]
-    /// message when the task completes.
-    ///
-    /// The task is `Send + 'static`; use cloned `Arc`s or `Copy` values to share state
-    /// with the running task. When the future resolves:
-    ///
-    /// 1. The returned `Message` is sent through the internal channel.
-    /// 2. [`WakeupHandle::wake`] is called (if set) to alert the event loop.
-    /// 3. The owning [`ComponentPod::poll_messages`] drains the channel and calls
-    ///    [`Component::update`] on the UI thread.
-    ///
-    /// Returns [`TaskError::AlreadyExists`] if a task with the same `id` is already running.
-    pub fn spawn_msg(
-        &mut self,
-        id: impl Into<String>,
-        task: impl Future<Output = Message> + Send + 'static,
-    ) -> Result<(), TaskError> {
-        let id = id.into();
-        if self.tasks.contains_key(&id) {
-            return Err(TaskError::AlreadyExists);
-        }
-        let tx = self.message_tx.clone();
-        let wakeup = self.wakeup;
-
-        let handle = tokio::spawn(async move {
-            let msg = task.await;
-            let _ = tx.send(msg);
-            wakeup.wake();
-        });
-
-        self.tasks.insert(id, handle);
-        Ok(())
-    }
-
-    /// Abort the task identified by `id`.
+    /// Aborts the task with the given `id`.
     ///
     /// Returns [`TaskError::NotFound`] if no such task exists.
     pub fn abort(&mut self, id: impl Into<String>) -> Result<(), TaskError> {
@@ -110,10 +70,8 @@ impl<Message: Send + 'static> TaskHandler<Message> {
     }
 }
 
-impl<Message: Send + 'static> Drop for TaskHandler<Message> {
+impl Drop for TaskHandler {
     fn drop(&mut self) {
-        // Abort all running tasks when the handler is dropped (i.e., when
-        // ComponentPod is dropped) to avoid dangling background work.
         for (_, handle) in self.tasks.drain() {
             handle.abort();
         }
@@ -130,61 +88,66 @@ pub enum TaskError {
 // Component
 // ----------------------------------------------------------------------------
 
-/// A trait for building stateful, Elm-like UI components.
+/// A trait for building stateful UI components.
 ///
 /// # Lifecycle
 ///
 /// 1. [`setup`](Component::setup) is called once when the component is first attached.
 /// 2. [`view`](Component::view) is called to build the widget tree.
-/// 3. [`update`](Component::update) is called when a [`Message`](Component::Message) arrives
-///    (from a background task via [`TaskHandler::spawn_msg`], or directly from the framework).
+/// 3. [`update`](Component::update) is called when a discrete [`Message`](Component::Message)
+///    arrives from the application layer.
 /// 4. [`event`](Component::event) translates a child widget's `InnerEvent` into an outward
-///    `Event`, optionally bubbling it up to a parent component.
+///    `Event`, optionally bubbling it up to a parent.
+///
+/// # State management
+///
+/// State is held as [`SharedValue`](shared_buffer::SharedValue) fields.
+/// Calling `SharedValue::store()` automatically signals the event loop to schedule
+/// a redraw. If no `store()` is called, no redraw is triggered.
+///
+/// All methods take `&self`, so a component can be shared as `Arc<C>` with
+/// the backend without requiring exclusive access.
 pub trait Component: Send + Sync + 'static {
+    /// Discrete commands delivered from the application layer.
     type Message: Send + Sync + 'static;
+    /// Event propagated upward to the parent component.
     type Event: Send + Sync + 'static;
+    /// Event emitted by child widgets, consumed by [`event()`](Component::event).
     type InnerEvent: Send + Sync + 'static;
 
     /// Called once when the component is first attached to the widget tree.
-    /// Use this to start any initial background tasks.
-    fn setup(&mut self, task_handler: &mut TaskHandler<Self::Message>, ctx: &dyn WidgetContext);
+    fn setup(&self, task_handler: &mut TaskHandler, ctx: &dyn WidgetContext);
 
-    /// Called when a [`Message`](Component::Message) is received.
+    /// Called when a discrete [`Message`](Component::Message) is received.
     ///
-    /// Messages arrive either from background tasks ([`TaskHandler::spawn_msg`]) or from
-    /// the application layer. Spawn follow-up tasks here to continue background work.
-    ///
-    /// # TODO
-    /// Return a flag indicating whether a re-render is needed.
+    /// Typically used to trigger background tasks or write to [`SharedValue`](shared_buffer::SharedValue)
+    /// fields. A redraw occurs only if `store()` is called.
     fn update(
-        &mut self,
-        task_handler: &mut TaskHandler<Self::Message>,
+        &self,
+        task_handler: &mut TaskHandler,
         message: Self::Message,
         ctx: &dyn WidgetContext,
     );
 
-    /// Build the view tree for this frame.
-    fn view(&mut self, ctx: &dyn WidgetContext) -> Box<dyn View<Self::InnerEvent>>;
+    /// Builds the view tree from the current state.
+    fn view(&self, ctx: &dyn WidgetContext) -> Box<dyn View<Self::InnerEvent>>;
 
-    /// Translate an `InnerEvent` from a child widget into an optional outward `Event`.
+    /// Translates a child widget's `InnerEvent` into an optional outward `Event`.
     fn event(
-        &mut self,
-        task_handler: &mut TaskHandler<Self::Message>,
+        &self,
+        task_handler: &mut TaskHandler,
         event: Self::InnerEvent,
         ctx: &dyn WidgetContext,
     ) -> Option<Self::Event>;
 
-    /// Handle a raw device event (keyboard, mouse, etc.).
-    /// Provides a default no-op implementation.
+    /// Handles a raw device event (keyboard, mouse, etc.). Default implementation is a no-op.
     fn input(
-        &mut self,
-        task_handler: &mut TaskHandler<Self::Message>,
+        &self,
+        task_handler: &mut TaskHandler,
         device_event: &DeviceEvent,
         ctx: &dyn WidgetContext,
     ) {
-        let _ = task_handler;
-        let _ = device_event;
-        let _ = ctx;
+        let _ = (task_handler, device_event, ctx);
     }
 }
 
@@ -192,75 +155,53 @@ pub trait Component: Send + Sync + 'static {
 // ComponentPod
 // ----------------------------------------------------------------------------
 
-/// Wraps a [`Component`] together with its [`TaskHandler`] and message channel.
+/// Owns a [`Component`] together with its [`TaskHandler`].
 ///
-/// Owned by the UI framework. Users interact with the component via its
-/// [`Component`] trait methods, which are dispatched through this pod.
+/// Held by the UI framework. Use [`ComponentPod::arc()`] to share the component
+/// state with the backend.
 pub struct ComponentPod<C: Component> {
     label: Option<String>,
-    /// Shared with [`ComponentWidget`] so the widget layer can call
-    /// `input` and `event` without going through the pod.
-    task_handler: Arc<Mutex<TaskHandler<C::Message>>>,
-    /// Shared with [`ComponentWidget`] for the same reason.
-    component: Arc<RwLock<C>>,
+    component: Arc<C>,
+    task_handler: Arc<Mutex<TaskHandler>>,
 }
 
 impl<C: Component> ComponentPod<C> {
     pub fn new(label: Option<&str>, component: C) -> Self {
         Self {
             label: label.map(|s| s.to_string()),
-            task_handler: Arc::new(Mutex::new(TaskHandler::new(super::global_wakeup_handle()))),
-            component: Arc::new(RwLock::new(component)),
+            component: Arc::new(component),
+            task_handler: Arc::new(Mutex::new(TaskHandler::new())),
         }
+    }
+
+    /// Returns a cloned `Arc` to the component.
+    ///
+    /// The backend holds this `Arc` and writes to [`SharedValue`](shared_buffer::SharedValue)
+    /// fields directly to update UI state.
+    pub fn arc(&self) -> Arc<C> {
+        self.component.clone()
     }
 }
 
 impl<C: Component> ComponentPod<C> {
-    /// Call [`Component::setup`]. Invoke once after construction.
-    pub fn setup(&mut self, ctx: &dyn WidgetContext) {
-        let mut task_handler = self.task_handler.lock();
-        self.component.write().setup(&mut task_handler, ctx);
+    /// Calls [`Component::setup`]. Invoke once after construction.
+    pub fn setup(&self, ctx: &dyn WidgetContext) {
+        self.component.setup(&mut self.task_handler.lock(), ctx);
     }
 
-    /// Deliver a message directly (e.g., from a parent component or application layer).
-    pub fn update(&mut self, message: C::Message, ctx: &dyn WidgetContext) {
-        let mut task_handler = self.task_handler.lock();
+    /// Delivers a discrete [`Message`](Component::Message) to the component.
+    pub fn update(&self, message: C::Message, ctx: &dyn WidgetContext) {
         self.component
-            .write()
-            .update(&mut task_handler, message, ctx);
+            .update(&mut self.task_handler.lock(), message, ctx);
     }
 
-    /// Drain all pending messages from background tasks and call [`Component::update`]
-    /// for each one. Messages are processed in task-completion order (FIFO).
-    ///
-    /// Returns `true` if at least one message was processed, indicating that
-    /// [`view`](ComponentPod::view) should be called again to reflect the new state.
-    pub fn poll_messages(&mut self, ctx: &dyn WidgetContext) -> bool {
-        let mut did_update = false;
-        loop {
-            // Lock task_handler to access the receiver, then extract one message.
-            // The lock is re-acquired each iteration so that update() can spawn
-            // new tasks (which also need the lock) without deadlocking.
-            let mut task_handler = self.task_handler.lock();
-            let msg = match task_handler.message_rx.try_recv() {
-                Ok(msg) => msg,
-                Err(_) => break,
-            };
-            self.component.write().update(&mut *task_handler, msg, ctx);
-            did_update = true;
-            // Lock released here; next iteration re-acquires.
-        }
-        did_update
-    }
-
-    /// Build a [`ComponentView`] from the current state.
-    /// Call after [`setup`](ComponentPod::setup) and whenever the model changes.
-    pub fn view(&mut self, ctx: &dyn WidgetContext) -> ComponentView<C> {
+    /// Builds a [`ComponentView`] from the current state.
+    pub fn view(&self, ctx: &dyn WidgetContext) -> ComponentView<C> {
         ComponentView {
             label: self.label.clone(),
             task_handler: self.task_handler.clone(),
             component: self.component.clone(),
-            inner_view: self.component.write().view(ctx),
+            inner_view: self.component.view(ctx),
         }
     }
 }
@@ -271,8 +212,8 @@ impl<C: Component> ComponentPod<C> {
 
 pub struct ComponentView<C: Component> {
     label: Option<String>,
-    task_handler: Arc<Mutex<TaskHandler<C::Message>>>,
-    component: Arc<RwLock<C>>,
+    task_handler: Arc<Mutex<TaskHandler>>,
+    component: Arc<C>,
     inner_view: Box<dyn View<C::InnerEvent>>,
 }
 
@@ -294,8 +235,8 @@ impl<C: Component> View<C::Event> for ComponentView<C> {
 // ----------------------------------------------------------------------------
 
 struct ComponentWidget<C: Component> {
-    task_handler: Arc<Mutex<TaskHandler<C::Message>>>,
-    component: Arc<RwLock<C>>,
+    task_handler: Arc<Mutex<TaskHandler>>,
+    component: Arc<C>,
     inner_widget: WidgetPod<C::InnerEvent>,
 }
 
@@ -318,20 +259,15 @@ impl<C: Component> Widget<C::Event> for ComponentWidget<C> {
         event: &DeviceEvent,
         ctx: &dyn WidgetContext,
     ) -> (Option<C::Event>, WidgetInteractionResult) {
-        // Call input() with a short-lived lock to avoid holding it across inner_widget calls.
-        {
-            let mut task_handler = self.task_handler.lock();
-            self.component.write().input(&mut task_handler, event, ctx);
-        }
+        self.component
+            .input(&mut self.task_handler.lock(), event, ctx);
 
         let (inner_event, interaction_result) = self.inner_widget.device_input(bounds, event, ctx);
 
         if let Some(inner_event) = inner_event {
-            let mut task_handler = self.task_handler.lock();
             let event = self
                 .component
-                .write()
-                .event(&mut task_handler, inner_event, ctx);
+                .event(&mut self.task_handler.lock(), inner_event, ctx);
             (event, interaction_result)
         } else {
             (None, interaction_result)

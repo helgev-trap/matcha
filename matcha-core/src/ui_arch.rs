@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use crate::application::ApplicationControler;
 
 use crate::event::device_event::{DeviceEvent, DeviceEventState};
@@ -11,31 +9,7 @@ use crate::window_manager::WindowManager;
 
 pub mod component;
 pub mod metrics;
-pub mod update_flag;
 pub mod widget;
-
-// -------
-// Globals
-// -------
-
-/// Initial value is true to force the first rendering.
-static COMPONENT_RE_VIEW_NEEDED: update_flag::UpdateFlags = update_flag::UpdateFlags::new_true();
-
-impl update_flag::UpdateFlags {
-    // Intentionally empty — the inherent impl lives in update_flag.rs.
-    // Access `COMPONENT_RE_VIEW_NEEDED.wakeup_handle()` to get a handle
-    // that background tasks can use to signal the event loop.
-}
-
-/// Returns a [`WakeupHandle`](update_flag::WakeupHandle) backed by the global
-/// `COMPONENT_RE_VIEW_NEEDED` flag.
-///
-/// Pass this to [`ComponentPod::set_wakeup`] during initialization so that
-/// tasks spawned via [`TaskHandler::spawn_msg`] can wake the event loop when
-/// their result is ready.
-pub(crate) fn global_wakeup_handle() -> update_flag::WakeupHandle {
-    COMPONENT_RE_VIEW_NEEDED.wakeup_handle()
-}
 
 // ------
 // UiArch
@@ -98,7 +72,7 @@ impl<BackendMessage> UiArch<BackendMessage> {
     ) {
     }
 
-    // Called when a custom user event is received (e.g. from background task)
+    // Called when a custom user event is received (e.g. from backend)
     pub(crate) fn user_event(
         &mut self,
         app_ctrl: &impl ApplicationControler,
@@ -109,25 +83,18 @@ impl<BackendMessage> UiArch<BackendMessage> {
 
 /// UI update methods
 impl<BackendMessage> UiArch<BackendMessage> {
-    // Called on every event-loop iteration (winit AboutToWait / MainEventsCleared).
+    // Called when BufferUpdated event is received (via bridge thread) or
+    // on every event-loop iteration when in continuous rendering mode.
     // Drains pending task messages and rebuilds the view tree if anything changed.
     pub(crate) fn update(
         &mut self,
         window_manager: &WindowManager,
         app_ctrl: &impl ApplicationControler,
     ) {
-        if !COMPONENT_RE_VIEW_NEEDED.value() {
-            return;
-        }
-        COMPONENT_RE_VIEW_NEEDED.clear();
-
         // TODO: For each ComponentPod managed by this UiArch:
         //
         //   let ctx = ...; // construct a WidgetContext
-        //   if component_pod.poll_messages(&ctx) {
-        //       // At least one background task delivered a message.
-        //       // Call component_pod.view(&ctx) and diff / apply to the widget tree.
-        //   }
+        //   component_pod.view(&ctx); // rebuild view tree
         //
         // This is wired up once ComponentPod storage is added to UiArch.
     }
