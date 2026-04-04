@@ -222,12 +222,8 @@ impl<BackendMessage: Send + 'static>
 
 pub(crate) enum WinitUserMessage<Msg: Send + 'static> {
     BufferUpdated,
-    BackendMessage {
-        msg: Msg,
-    },
-    EventLoopCommand {
-        cmd: ApplicationCommand,
-    },
+    BackendMessage { msg: Msg },
+    EventLoopCommand { cmd: ApplicationCommand },
 }
 
 // Adaptor for API of `application.rs`.

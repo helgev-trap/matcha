@@ -43,12 +43,19 @@ impl TaskHandler {
         Fut: Future<Output = ()> + Send + 'static,
     {
         let id = id.into();
-        if self.tasks.contains_key(&id) {
-            return Err(TaskError::AlreadyExists);
+        if let Some(handle) = self.tasks.get(&id) {
+            if !handle.is_finished() {
+                return Err(TaskError::AlreadyExists);
+            }
         }
         let handle = tokio::spawn(task());
         self.tasks.insert(id, handle);
         Ok(())
+    }
+
+    /// Removes all finished task entries from the internal map.
+    pub fn gc(&mut self) {
+        self.tasks.retain(|_, h| !h.is_finished());
     }
 
     /// Aborts the task with the given `id`.
@@ -64,9 +71,12 @@ impl TaskHandler {
         }
     }
 
-    /// Returns `true` if a task with the given `id` is currently registered.
+    /// Returns `true` if a task with the given `id` is currently running.
     pub fn is_running(&self, id: &str) -> bool {
-        self.tasks.contains_key(id)
+        self.tasks
+            .get(id)
+            .map(|h| !h.is_finished())
+            .unwrap_or(false)
     }
 }
 
