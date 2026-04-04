@@ -123,8 +123,9 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
 
 /// User event
 impl<BackendMessage: Send + 'static> Application<BackendMessage> {
-    pub(crate) fn update_needed(&self, app_ctrl: &impl ApplicationControler) {
-        todo!()
+    /// Called when a `BufferUpdated` event is received from the bridge thread.
+    pub(crate) fn buffer_updated(&mut self, app_ctrl: &impl ApplicationControler) {
+        self.ui.update(&self.window_manager, app_ctrl);
     }
 
     pub(crate) fn backend_message(
@@ -134,6 +135,37 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
     ) {
         self.ui.user_event(app_ctrl, msg);
     }
+}
+
+/// Spawns the buffer bridge thread.
+///
+/// The bridge thread blocks on [`BufferContext::wait_for_signal()`] and forwards
+/// each signal to the winit event loop via `EventLoopProxy::send_event()`,
+/// waking it from `ControlFlow::Wait`.
+///
+/// Call once after the winit `EventLoopProxy` has been obtained.
+#[cfg(feature = "winit")]
+pub(crate) fn spawn_bridge_thread<BackendMessage>(
+    proxy: winit::event_loop::EventLoopProxy<
+        crate::winit_interface::WinitUserMessage<BackendMessage>,
+    >,
+) -> std::thread::JoinHandle<()>
+where
+    BackendMessage: Send + 'static,
+{
+    shared_buffer::BufferContext::init_global();
+    let ctx = shared_buffer::BufferContext::global().clone();
+
+    std::thread::Builder::new()
+        .name("matcha-buffer-bridge".into())
+        .spawn(move || {
+            while ctx.wait_for_signal() {
+                proxy
+                    .send_event(crate::winit_interface::WinitUserMessage::BufferUpdated)
+                    .ok();
+            }
+        })
+        .expect("failed to spawn buffer bridge thread")
 }
 
 /// Polling event

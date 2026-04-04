@@ -2,8 +2,8 @@ use std::any::Any;
 
 use renderer::render_node::RenderNode;
 
-use crate::event::device_event::DeviceEvent;
 use super::metrics;
+use crate::event::device_event::DeviceEvent;
 
 // ----------------------------------------------------------------------------
 // Types
@@ -39,7 +39,12 @@ pub trait Widget<T: 'static>: Send + Sync + Any {
 
     fn update(&mut self, view: &Self::View) -> WidgetInteractionResult;
 
-    fn device_input(&mut self, bounds: [f32; 2], event: &DeviceEvent, ctx: &dyn WidgetContext) -> (Option<T>, WidgetInteractionResult);
+    fn device_input(
+        &mut self,
+        bounds: [f32; 2],
+        event: &DeviceEvent,
+        ctx: &dyn WidgetContext,
+    ) -> (Option<T>, WidgetInteractionResult);
 
     fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn WidgetContext) -> bool {
         let _ = ctx;
@@ -57,15 +62,28 @@ pub trait Widget<T: 'static>: Send + Sync + Any {
 
 /// Wrapper trait to erase generic type T from Widget trait.
 pub(super) trait AnyWidget<T>: Send + Sync + Any {
-    fn try_update(&mut self, view: &dyn View<T>) -> Result<WidgetInteractionResult, WidgetUpdateError>;
+    fn try_update(
+        &mut self,
+        view: &dyn View<T>,
+    ) -> Result<WidgetInteractionResult, WidgetUpdateError>;
 
-    fn device_input(&mut self, bounds: [f32; 2], event: &DeviceEvent, ctx: &dyn WidgetContext) -> (Option<T>, WidgetInteractionResult);
+    fn device_input(
+        &mut self,
+        bounds: [f32; 2],
+        event: &DeviceEvent,
+        ctx: &dyn WidgetContext,
+    ) -> (Option<T>, WidgetInteractionResult);
 
     fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn WidgetContext) -> bool;
 
     fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn WidgetContext) -> [f32; 2];
 
-    fn render(&mut self, bounds: [f32; 2], /* TODO: background: Background, */ ctx: &dyn WidgetContext) -> RenderNode;
+    fn render(
+        &mut self,
+        bounds: [f32; 2],
+        /* TODO: background: Background, */
+        ctx: &dyn WidgetContext,
+    ) -> RenderNode;
 }
 
 impl<W, V, T: 'static> AnyWidget<T> for W
@@ -73,7 +91,10 @@ where
     W: Widget<T, View = V>,
     V: View<T>,
 {
-    fn try_update(&mut self, view: &dyn View<T>) -> Result<WidgetInteractionResult, WidgetUpdateError> {
+    fn try_update(
+        &mut self,
+        view: &dyn View<T>,
+    ) -> Result<WidgetInteractionResult, WidgetUpdateError> {
         let Some(view) = (view as &dyn Any).downcast_ref::<V>() else {
             return Err(WidgetUpdateError::TypeMismatch);
         };
@@ -81,7 +102,12 @@ where
         Ok(self.update(view))
     }
 
-    fn device_input(&mut self, bounds: [f32; 2], event: &DeviceEvent, ctx: &dyn WidgetContext) -> (Option<T>, WidgetInteractionResult) {
+    fn device_input(
+        &mut self,
+        bounds: [f32; 2],
+        event: &DeviceEvent,
+        ctx: &dyn WidgetContext,
+    ) -> (Option<T>, WidgetInteractionResult) {
         Widget::device_input(self, bounds, event, ctx)
     }
 
@@ -148,11 +174,19 @@ impl<T> WidgetPod<T> {
 }
 
 impl<T: 'static> WidgetPod<T> {
-    pub fn try_update(&mut self, view: &dyn View<T>) -> Result<WidgetInteractionResult, WidgetUpdateError> {
+    pub fn try_update(
+        &mut self,
+        view: &dyn View<T>,
+    ) -> Result<WidgetInteractionResult, WidgetUpdateError> {
         self.widget.try_update(view)
     }
 
-    pub fn device_input(&mut self, bounds: [f32; 2], event: &DeviceEvent, ctx: &dyn WidgetContext) -> (Option<T>, WidgetInteractionResult) {
+    pub fn device_input(
+        &mut self,
+        bounds: [f32; 2],
+        event: &DeviceEvent,
+        ctx: &dyn WidgetContext,
+    ) -> (Option<T>, WidgetInteractionResult) {
         let (event, interaction_result) = self.widget.device_input(bounds, event, ctx);
 
         match interaction_result {

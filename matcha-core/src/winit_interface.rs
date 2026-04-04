@@ -177,14 +177,14 @@ impl<BackendMessage: Send + 'static>
         event: WinitUserMessage<BackendMessage>,
     ) {
         match event {
-            WinitUserMessage::UpdateNeeded => {
-                self.application.update_needed(event_loop);
-            }
             WinitUserMessage::BackendMessage { msg } => {
                 self.application.backend_message(event_loop, msg)
             }
             WinitUserMessage::EventLoopCommand { cmd } => {
                 self.application.event_loop_commands(cmd);
+            }
+            WinitUserMessage::BufferUpdated => {
+                self.application.buffer_updated(event_loop);
             }
         }
     }
@@ -221,9 +221,13 @@ impl<BackendMessage: Send + 'static>
 }
 
 pub(crate) enum WinitUserMessage<Msg: Send + 'static> {
-    UpdateNeeded,
-    BackendMessage { msg: Msg },
-    EventLoopCommand { cmd: ApplicationCommand },
+    BufferUpdated,
+    BackendMessage {
+        msg: Msg,
+    },
+    EventLoopCommand {
+        cmd: ApplicationCommand,
+    },
 }
 
 // Adaptor for API of `application.rs`.
