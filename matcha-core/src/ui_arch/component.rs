@@ -228,13 +228,13 @@ pub struct ComponentView<C: Component> {
 }
 
 impl<C: Component> View<C::Event> for ComponentView<C> {
-    fn build(&self) -> WidgetPod<C::Event> {
+    fn build(&self, ctx: &dyn WidgetContext) -> WidgetPod<C::Event> {
         WidgetPod::new(
             self.label.as_deref(),
             ComponentWidget {
                 task_handler: self.task_handler.clone(),
                 component: self.component.clone(),
-                inner_widget: self.inner_view.build(),
+                inner_widget: self.inner_view.build(ctx),
             },
         )
     }
@@ -253,11 +253,11 @@ struct ComponentWidget<C: Component> {
 impl<C: Component> Widget<C::Event> for ComponentWidget<C> {
     type View = ComponentView<C>;
 
-    fn update(&mut self, view: &Self::View) -> WidgetInteractionResult {
-        match self.inner_widget.try_update(view.inner_view.as_ref()) {
+    fn update(&mut self, view: &Self::View, ctx: &dyn WidgetContext) -> WidgetInteractionResult {
+        match self.inner_widget.try_update(view.inner_view.as_ref(), ctx) {
             Ok(interaction_result) => interaction_result,
             Err(WidgetUpdateError::TypeMismatch) => {
-                self.inner_widget = view.inner_view.build();
+                self.inner_widget = view.inner_view.build(ctx);
                 WidgetInteractionResult::LayoutNeeded
             }
         }
