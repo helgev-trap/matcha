@@ -1,14 +1,15 @@
 use crate::{
     application::{Application, ApplicationCommand, ApplicationControler},
     event::window_event::WindowEvent,
+    ui_arch::window_model::WindowModel,
 };
 
-pub(crate) struct WinitInterface<BackendMessage: Send + 'static> {
-    pub(crate) application: Application<BackendMessage>,
+pub(crate) struct WinitInterface<M: WindowModel> {
+    pub(crate) application: Application<M>,
 }
 
-impl<BackendMessage: Send + 'static> WinitInterface<BackendMessage> {
-    pub fn new(application: Application<BackendMessage>) -> Self {
+impl<M: WindowModel> WinitInterface<M> {
+    pub fn new(application: Application<M>) -> Self {
         Self { application }
     }
 
@@ -17,9 +18,8 @@ impl<BackendMessage: Send + 'static> WinitInterface<BackendMessage> {
     }
 }
 
-impl<BackendMessage: Send + 'static>
-    winit::application::ApplicationHandler<WinitUserMessage<BackendMessage>>
-    for WinitInterface<BackendMessage>
+impl<M: WindowModel> winit::application::ApplicationHandler<WinitUserMessage<M>>
+    for WinitInterface<M>
 {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         self.application.resumed(event_loop);
@@ -174,7 +174,7 @@ impl<BackendMessage: Send + 'static>
     fn user_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
-        event: WinitUserMessage<BackendMessage>,
+        event: WinitUserMessage<M>,
     ) {
         match event {
             WinitUserMessage::BackendMessage { msg } => {
@@ -220,9 +220,9 @@ impl<BackendMessage: Send + 'static>
     }
 }
 
-pub(crate) enum WinitUserMessage<Msg: Send + 'static> {
+pub(crate) enum WinitUserMessage<M: WindowModel> {
     BufferUpdated,
-    BackendMessage { msg: Msg },
+    BackendMessage { msg: M::Message },
     EventLoopCommand { cmd: ApplicationCommand },
 }
 
@@ -230,8 +230,8 @@ pub(crate) enum WinitUserMessage<Msg: Send + 'static> {
 
 impl ApplicationControler for winit::event_loop::ActiveEventLoop {}
 
-impl<BackendMessage: Send + 'static> crate::application::ApplicationLoopProxy<BackendMessage>
-    for winit::event_loop::EventLoopProxy<crate::winit_interface::WinitUserMessage<BackendMessage>>
+impl<M: WindowModel> crate::application::ApplicationLoopProxy<M::Message>
+    for winit::event_loop::EventLoopProxy<WinitUserMessage<M>>
 {
 }
 
