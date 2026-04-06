@@ -9,11 +9,12 @@ use crate::window_manager::WindowManager;
 
 pub mod component;
 pub mod metrics;
+pub mod ui_window;
 pub mod widget;
 
-// ------
+// ----------------------------------------------------------------------------
 // UiArch
-// ------
+// ----------------------------------------------------------------------------
 
 pub struct UiArch<BackendMessage> {
     _phantom: std::marker::PhantomData<BackendMessage>,

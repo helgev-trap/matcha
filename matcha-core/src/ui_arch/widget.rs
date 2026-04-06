@@ -3,7 +3,7 @@ use std::any::Any;
 use renderer::render_node::RenderNode;
 
 use super::metrics;
-use crate::event::device_event::DeviceEvent;
+use crate::{event::device_event::DeviceEvent, window::WindowConfig, window_manager::WindowHandle};
 
 // ----------------------------------------------------------------------------
 // Types
@@ -28,16 +28,21 @@ pub enum WidgetInteractionResult {
 // Key Structs and Traits
 // ----------------------------------------------------------------------------
 
-pub trait WidgetContext {}
+pub trait WidgetContext: WidgetContextPriv {}
+
+/// Private methods for WidgetContext.
+pub(crate) trait WidgetContextPriv {
+    fn create_window(&self, config: &WindowConfig) -> WindowHandle;
+}
 
 pub trait View<T: 'static>: Send + Sync + Any {
-    fn build(&self) -> WidgetPod<T>;
+    fn build(&self, ctx: &dyn WidgetContext) -> WidgetPod<T>;
 }
 
 pub trait Widget<T: 'static>: Send + Sync + Any {
     type View: View<T>;
 
-    fn update(&mut self, view: &Self::View) -> WidgetInteractionResult;
+    fn update(&mut self, view: &Self::View, ctx: &dyn WidgetContext) -> WidgetInteractionResult;
 
     fn device_input(
         &mut self,
@@ -65,6 +70,7 @@ pub(super) trait AnyWidget<T>: Send + Sync + Any {
     fn try_update(
         &mut self,
         view: &dyn View<T>,
+        ctx: &dyn WidgetContext,
     ) -> Result<WidgetInteractionResult, WidgetUpdateError>;
 
     fn device_input(
@@ -94,12 +100,13 @@ where
     fn try_update(
         &mut self,
         view: &dyn View<T>,
+        ctx: &dyn WidgetContext,
     ) -> Result<WidgetInteractionResult, WidgetUpdateError> {
         let Some(view) = (view as &dyn Any).downcast_ref::<V>() else {
             return Err(WidgetUpdateError::TypeMismatch);
         };
 
-        Ok(self.update(view))
+        Ok(self.update(view, ctx))
     }
 
     fn device_input(
@@ -177,8 +184,9 @@ impl<T: 'static> WidgetPod<T> {
     pub fn try_update(
         &mut self,
         view: &dyn View<T>,
+        ctx: &dyn WidgetContext,
     ) -> Result<WidgetInteractionResult, WidgetUpdateError> {
-        self.widget.try_update(view)
+        self.widget.try_update(view, ctx)
     }
 
     pub fn device_input(
