@@ -3,10 +3,11 @@ use std::sync::Arc;
 use crate::event::device_event::{DeviceEvent, DeviceEventState};
 use crate::event::raw_device_event::{RawDeviceEvent, RawDeviceId};
 use crate::event::window_event::{WindowEvent, WindowEventState};
+use crate::ui_arch::window_model::WindowModel;
 use crate::window::WindowId;
 use crate::window_manager::WindowManager;
 
-pub struct Application<BackendMessage: Send + 'static> {
+pub struct Application<M: WindowModel> {
     // runtime
     tokio_runtime: tokio::runtime::Runtime,
 
@@ -14,17 +15,17 @@ pub struct Application<BackendMessage: Send + 'static> {
     gpu: gpu_utils::gpu::Gpu,
 
     // ui resources
-    ui: crate::ui_arch::UiArch<BackendMessage>,
+    ui: crate::ui_arch::UiArch<M>,
 
     window_manager: Arc<WindowManager>,
 
     /// Way to send events to the event loop from outside.
     /// This is ensured to be Some after calling `Application::run()`
-    event_loop_proxy: Option<Box<dyn ApplicationLoopProxy<BackendMessage>>>,
+    event_loop_proxy: Option<Box<dyn ApplicationLoopProxy<M::Message>>>,
 }
 
 /// Construction and running
-impl<BackendMessage: Send + 'static> Application<BackendMessage> {
+impl<M: WindowModel> Application<M> {
     pub fn new() -> Self {
         todo!()
     }
@@ -36,7 +37,7 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
 }
 
 /// Lifecycle events
-impl<BackendMessage: Send + 'static> Application<BackendMessage> {
+impl<M: WindowModel> Application<M> {
     pub(crate) fn init(&mut self, app_ctrl: &impl ApplicationControler) {
         self.ui.init(app_ctrl);
     }
@@ -46,11 +47,12 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
     }
 
     pub(crate) fn create_window(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.update(&self.window_manager, app_ctrl);
+        self.ui.update(&self.window_manager, app_ctrl, &self.gpu);
     }
 
-    pub(crate) fn destroy_window(&self, app_ctrl: &impl ApplicationControler) {
-        self.window_manager.disable_all_windows();
+    pub(crate) fn destroy_window(&self, _app_ctrl: &impl ApplicationControler) {
+        // Surfaces are disabled asynchronously; windows remain tracked until the model removes them.
+        let _ = self.window_manager.disable_all_windows();
     }
 
     pub(crate) fn suspended(&mut self, app_ctrl: &impl ApplicationControler) {
@@ -63,7 +65,7 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
 }
 
 /// Window events
-impl<BackendMessage: Send + 'static> Application<BackendMessage> {
+impl<M: WindowModel> Application<M> {
     pub(crate) fn window_event(
         &mut self,
         app_ctrl: &impl ApplicationControler,
@@ -83,7 +85,7 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
 }
 
 /// Device event
-impl<BackendMessage: Send + 'static> Application<BackendMessage> {
+impl<M: WindowModel> Application<M> {
     pub(crate) fn device_event(
         &mut self,
         app_ctrl: &impl ApplicationControler,
@@ -103,7 +105,7 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
 }
 
 /// Raw device event
-impl<BackendMessage: Send + 'static> Application<BackendMessage> {
+impl<M: WindowModel> Application<M> {
     pub(crate) fn raw_device_event(
         &mut self,
         app_ctrl: &impl ApplicationControler,
@@ -115,23 +117,23 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
 }
 
 /// Event Loop Commands
-impl<BackendMessage: Send + 'static> Application<BackendMessage> {
-    pub(crate) fn event_loop_commands(&self, cmd: ApplicationCommand) {
+impl<M: WindowModel> Application<M> {
+    pub(crate) fn event_loop_commands(&self, _cmd: ApplicationCommand) {
         todo!()
     }
 }
 
 /// User event
-impl<BackendMessage: Send + 'static> Application<BackendMessage> {
+impl<M: WindowModel> Application<M> {
     /// Called when a `BufferUpdated` event is received from the bridge thread.
     pub(crate) fn buffer_updated(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.update(&self.window_manager, app_ctrl);
+        self.ui.update(&self.window_manager, app_ctrl, &self.gpu);
     }
 
     pub(crate) fn backend_message(
         &mut self,
         app_ctrl: &impl ApplicationControler,
-        msg: BackendMessage,
+        msg: M::Message,
     ) {
         self.ui.user_event(app_ctrl, msg);
     }
@@ -145,14 +147,9 @@ impl<BackendMessage: Send + 'static> Application<BackendMessage> {
 ///
 /// Call once after the winit `EventLoopProxy` has been obtained.
 #[cfg(feature = "winit")]
-pub(crate) fn spawn_bridge_thread<BackendMessage>(
-    proxy: winit::event_loop::EventLoopProxy<
-        crate::winit_interface::WinitUserMessage<BackendMessage>,
-    >,
-) -> std::thread::JoinHandle<()>
-where
-    BackendMessage: Send + 'static,
-{
+pub(crate) fn spawn_bridge_thread<M: WindowModel>(
+    proxy: winit::event_loop::EventLoopProxy<crate::winit_interface::WinitUserMessage<M>>,
+) -> std::thread::JoinHandle<()> {
     shared_buffer::BufferContext::init_global();
     let ctx = shared_buffer::BufferContext::global().clone();
 
@@ -171,39 +168,35 @@ where
 /// Polling event
 ///
 /// TODO: Wrap and abstract `winit::application::ApplicationHandler::new_events`
-impl<BackendMessage: Send + 'static> Application<BackendMessage> {
-    pub(crate) fn poll(&mut self, app_ctrl: &impl ApplicationControler) {
+impl<M: WindowModel> Application<M> {
+    pub(crate) fn poll(&mut self, _app_ctrl: &impl ApplicationControler) {
         todo!()
     }
 
     pub(crate) fn resume_time_reached(
         &mut self,
         app_ctrl: &impl ApplicationControler,
-        start: std::time::Instant,
-        requested_resume: std::time::Instant,
+        _start: std::time::Instant,
+        _requested_resume: std::time::Instant,
     ) {
-        self.ui.update(&self.window_manager, app_ctrl);
+        self.ui.update(&self.window_manager, app_ctrl, &self.gpu);
     }
 
     pub(crate) fn wait_cancelled(
         &mut self,
-        app_ctrl: &impl ApplicationControler,
-        start: std::time::Instant,
-        requested_resume: Option<std::time::Instant>,
+        _app_ctrl: &impl ApplicationControler,
+        _start: std::time::Instant,
+        _requested_resume: Option<std::time::Instant>,
     ) {
         // currently do nothing
     }
 }
 
 /// Currently not supported
-impl<BackendMessage: Send + 'static> Application<BackendMessage> {
-    pub(crate) fn about_to_wait(&mut self, app_ctrl: &impl ApplicationControler) {
-        let _ = app_ctrl;
-    }
+impl<M: WindowModel> Application<M> {
+    pub(crate) fn about_to_wait(&mut self, _app_ctrl: &impl ApplicationControler) {}
 
-    pub(crate) fn memory_warning(&mut self, app_ctrl: &impl ApplicationControler) {
-        let _ = app_ctrl;
-    }
+    pub(crate) fn memory_warning(&mut self, _app_ctrl: &impl ApplicationControler) {}
 }
 
 // -------------------

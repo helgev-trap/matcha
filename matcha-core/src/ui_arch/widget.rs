@@ -3,7 +3,7 @@ use std::any::Any;
 use renderer::render_node::RenderNode;
 
 use super::metrics;
-use crate::{event::device_event::DeviceEvent, window::WindowConfig, window_manager::WindowHandle};
+use crate::event::device_event::DeviceEvent;
 
 // ----------------------------------------------------------------------------
 // Types
@@ -28,12 +28,10 @@ pub enum WidgetInteractionResult {
 // Key Structs and Traits
 // ----------------------------------------------------------------------------
 
-pub trait WidgetContext: WidgetContextPriv {}
-
-/// Private methods for WidgetContext.
-pub(crate) trait WidgetContextPriv {
-    fn create_window(&self, config: &WindowConfig) -> WindowHandle;
-}
+/// Context passed to `Widget` and `View` methods.
+///
+/// Currently a marker trait. Will expose layout utilities, font systems, etc. in future.
+pub trait WidgetContext {}
 
 pub trait View<T: 'static>: Send + Sync + Any {
     fn build(&self, ctx: &dyn WidgetContext) -> WidgetPod<T>;
