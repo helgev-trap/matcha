@@ -3,7 +3,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use super::component::TaskHandler;
-use super::widget::{View, WidgetPod};
+use super::widget::{View, WidgetContext, WidgetPod};
 use crate::window::WindowConfig;
 use crate::window_manager::WindowHandle;
 
@@ -23,15 +23,6 @@ pub struct WindowDecl<T: 'static> {
 }
 
 // ----------------------------------------------------------------------------
-// WindowModelContext
-// ----------------------------------------------------------------------------
-
-/// Context passed to [`WindowModel`] methods.
-///
-/// MVP: empty marker trait. Will hold screen info, font systems, etc. in future.
-pub trait WindowModelContext {}
-
-// ----------------------------------------------------------------------------
 // WindowModel
 // ----------------------------------------------------------------------------
 
@@ -40,6 +31,9 @@ pub trait WindowModelContext {}
 /// Analogous to [`Component`](super::component::Component) but operates at the
 /// window layer. Implementations hold [`SharedValue`](shared_buffer::SharedValue)
 /// fields to drive dynamic window creation/destruction.
+///
+/// All methods receive `&dyn WidgetContext`, the same context used throughout the
+/// widget/component layer.
 pub trait WindowModel: Send + Sync + 'static {
     /// Discrete commands from the application backend.
     type Message: Send + Sync + 'static;
@@ -47,21 +41,21 @@ pub trait WindowModel: Send + Sync + 'static {
     type Event: Send + Sync + 'static;
 
     /// Called once when the model is first attached. Use to spawn background tasks.
-    fn setup(&self, task_handler: &mut TaskHandler, ctx: &dyn WindowModelContext);
+    fn setup(&self, task_handler: &mut TaskHandler, ctx: &dyn WidgetContext);
 
     /// Called when a discrete [`Message`](WindowModel::Message) is delivered.
     fn update(
         &self,
         task_handler: &mut TaskHandler,
         msg: Self::Message,
-        ctx: &dyn WindowModelContext,
+        ctx: &dyn WidgetContext,
     );
 
     /// Returns the current set of window declarations.
     ///
     /// Called on every [`UiArch::update()`] cycle. The result is diffed against
     /// the previous set by [`WindowDecl::key`].
-    fn windows(&self, ctx: &dyn WindowModelContext) -> Vec<WindowDecl<Self::Event>>;
+    fn windows(&self, ctx: &dyn WidgetContext) -> Vec<WindowDecl<Self::Event>>;
 }
 
 // ----------------------------------------------------------------------------
@@ -93,15 +87,15 @@ impl<M: WindowModel> WindowModelPod<M> {
 }
 
 impl<M: WindowModel> WindowModelPod<M> {
-    pub fn setup(&self, ctx: &dyn WindowModelContext) {
+    pub fn setup(&self, ctx: &dyn WidgetContext) {
         self.model.setup(&mut self.task_handler.lock(), ctx);
     }
 
-    pub fn update(&self, msg: M::Message, ctx: &dyn WindowModelContext) {
+    pub fn update(&self, msg: M::Message, ctx: &dyn WidgetContext) {
         self.model.update(&mut self.task_handler.lock(), msg, ctx);
     }
 
-    pub fn windows(&self, ctx: &dyn WindowModelContext) -> Vec<WindowDecl<M::Event>> {
+    pub fn windows(&self, ctx: &dyn WidgetContext) -> Vec<WindowDecl<M::Event>> {
         self.model.windows(ctx)
     }
 }

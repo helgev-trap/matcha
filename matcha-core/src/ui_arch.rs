@@ -13,14 +13,11 @@ pub mod widget;
 pub mod window_model;
 
 use widget::{WidgetContext, WidgetUpdateError};
-use window_model::{WindowDecl, WindowModel, WindowModelContext, WindowModelPod, WindowState};
+use window_model::{WindowDecl, WindowModel, WindowModelPod, WindowState};
 
 // ----------------------------------------------------------------------------
-// Context implementations (MVP: empty structs)
+// Context implementations (MVP: empty struct)
 // ----------------------------------------------------------------------------
-
-struct UiArchWindowModelContext;
-impl WindowModelContext for UiArchWindowModelContext {}
 
 struct UiArchWidgetContext;
 impl WidgetContext for UiArchWidgetContext {}
@@ -46,7 +43,7 @@ impl<M: WindowModel> UiArch<M> {
 /// Lifecycle methods
 impl<M: WindowModel> UiArch<M> {
     pub(crate) fn init(&mut self, _app_ctrl: &impl ApplicationControler) {
-        let ctx = UiArchWindowModelContext;
+        let ctx = UiArchWidgetContext;
         self.model_pod.setup(&ctx);
     }
 
@@ -73,9 +70,8 @@ impl<M: WindowModel> UiArch<M> {
         app_ctrl: &impl ApplicationControler,
         gpu: &gpu_utils::gpu::Gpu,
     ) {
-        let model_ctx = UiArchWindowModelContext;
-        let new_decls = self.model_pod.windows(&model_ctx);
         let widget_ctx = UiArchWidgetContext;
+        let new_decls = self.model_pod.windows(&widget_ctx);
 
         // Drain existing states into a key-indexed map for O(1) lookup.
         let mut old_states: HashMap<String, WindowState<M::Event>> = self
@@ -156,7 +152,7 @@ impl<M: WindowModel> UiArch<M> {
     }
 
     pub(crate) fn user_event(&mut self, _app_ctrl: &impl ApplicationControler, msg: M::Message) {
-        let ctx = UiArchWindowModelContext;
+        let ctx = UiArchWidgetContext;
         self.model_pod.update(msg, &ctx);
     }
 }
