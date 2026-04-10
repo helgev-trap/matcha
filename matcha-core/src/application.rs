@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
+use crate::backend::Backend;
 use crate::event::device_event::{DeviceEvent, DeviceEventState};
 use crate::event::raw_device_event::{RawDeviceEvent, RawDeviceId};
 use crate::event::window_event::{WindowEvent, WindowEventState};
-use crate::ui_arch::window_model::WindowModel;
+use crate::ui_arch::component::Component;
 use crate::window::WindowId;
 use crate::window_manager::WindowManager;
 
-pub struct Application<M: WindowModel> {
+pub struct Application<C: Component> {
     // runtime
     tokio_runtime: tokio::runtime::Runtime,
 
@@ -15,18 +16,24 @@ pub struct Application<M: WindowModel> {
     gpu: gpu_utils::gpu::Gpu,
 
     // ui resources
-    ui: crate::ui_arch::UiArch<M>,
+    ui: crate::ui_arch::UiArch<C>,
 
     window_manager: Arc<WindowManager>,
 
+    /// Backend that receives outward events from the widget tree.
+    backend: Arc<dyn Backend<C::Event> + Send + Sync>,
+
     /// Way to send events to the event loop from outside.
     /// This is ensured to be Some after calling `Application::run()`
-    event_loop_proxy: Option<Box<dyn ApplicationLoopProxy<M::Message>>>,
+    event_loop_proxy: Option<Box<dyn ApplicationLoopProxy<C::Message>>>,
 }
 
 /// Construction and running
-impl<M: WindowModel> Application<M> {
-    pub fn new() -> Self {
+impl<C: Component> Application<C> {
+    pub fn new(
+        model: C,
+        backend: Arc<dyn Backend<C::Event> + Send + Sync>,
+    ) -> Self {
         todo!()
     }
 
@@ -37,7 +44,7 @@ impl<M: WindowModel> Application<M> {
 }
 
 /// Lifecycle events
-impl<M: WindowModel> Application<M> {
+impl<C: Component> Application<C> {
     pub(crate) fn init(&mut self, app_ctrl: &impl ApplicationControler) {
         self.ui.init(app_ctrl);
     }
@@ -51,7 +58,6 @@ impl<M: WindowModel> Application<M> {
     }
 
     pub(crate) fn destroy_window(&self, _app_ctrl: &impl ApplicationControler) {
-        // Surfaces are disabled asynchronously; windows remain tracked until the model removes them.
         let _ = self.window_manager.disable_all_windows();
     }
 
@@ -65,7 +71,7 @@ impl<M: WindowModel> Application<M> {
 }
 
 /// Window events
-impl<M: WindowModel> Application<M> {
+impl<C: Component> Application<C> {
     pub(crate) fn window_event(
         &mut self,
         app_ctrl: &impl ApplicationControler,
@@ -85,7 +91,7 @@ impl<M: WindowModel> Application<M> {
 }
 
 /// Device event
-impl<M: WindowModel> Application<M> {
+impl<C: Component> Application<C> {
     pub(crate) fn device_event(
         &mut self,
         app_ctrl: &impl ApplicationControler,
@@ -98,14 +104,19 @@ impl<M: WindowModel> Application<M> {
                 let event = window.device_event_state.process_event(&event);
 
                 if let Some(event) = event {
-                    self.ui.device_event(app_ctrl, window_id, event);
+                    if let Some(out_event) = self.ui.device_event(app_ctrl, window_id, event) {
+                        let backend = self.backend.clone();
+                        tokio::spawn(async move {
+                            backend.send_event(out_event).await;
+                        });
+                    }
                 }
             }));
     }
 }
 
 /// Raw device event
-impl<M: WindowModel> Application<M> {
+impl<C: Component> Application<C> {
     pub(crate) fn raw_device_event(
         &mut self,
         app_ctrl: &impl ApplicationControler,
@@ -117,14 +128,14 @@ impl<M: WindowModel> Application<M> {
 }
 
 /// Event Loop Commands
-impl<M: WindowModel> Application<M> {
+impl<C: Component> Application<C> {
     pub(crate) fn event_loop_commands(&self, _cmd: ApplicationCommand) {
         todo!()
     }
 }
 
 /// User event
-impl<M: WindowModel> Application<M> {
+impl<C: Component> Application<C> {
     /// Called when a `BufferUpdated` event is received from the bridge thread.
     pub(crate) fn buffer_updated(&mut self, app_ctrl: &impl ApplicationControler) {
         self.ui.update(&self.window_manager, app_ctrl, &self.gpu);
@@ -133,7 +144,7 @@ impl<M: WindowModel> Application<M> {
     pub(crate) fn backend_message(
         &mut self,
         app_ctrl: &impl ApplicationControler,
-        msg: M::Message,
+        msg: C::Message,
     ) {
         self.ui.user_event(app_ctrl, msg);
     }
@@ -147,8 +158,10 @@ impl<M: WindowModel> Application<M> {
 ///
 /// Call once after the winit `EventLoopProxy` has been obtained.
 #[cfg(feature = "winit")]
-pub(crate) fn spawn_bridge_thread<M: WindowModel>(
-    proxy: winit::event_loop::EventLoopProxy<crate::winit_interface::WinitUserMessage<M>>,
+pub(crate) fn spawn_bridge_thread<C: Component>(
+    proxy: winit::event_loop::EventLoopProxy<
+        crate::winit_interface::WinitUserMessage<C>,
+    >,
 ) -> std::thread::JoinHandle<()> {
     shared_buffer::BufferContext::init_global();
     let ctx = shared_buffer::BufferContext::global().clone();
@@ -166,9 +179,7 @@ pub(crate) fn spawn_bridge_thread<M: WindowModel>(
 }
 
 /// Polling event
-///
-/// TODO: Wrap and abstract `winit::application::ApplicationHandler::new_events`
-impl<M: WindowModel> Application<M> {
+impl<C: Component> Application<C> {
     pub(crate) fn poll(&mut self, _app_ctrl: &impl ApplicationControler) {
         todo!()
     }
@@ -188,12 +199,11 @@ impl<M: WindowModel> Application<M> {
         _start: std::time::Instant,
         _requested_resume: Option<std::time::Instant>,
     ) {
-        // currently do nothing
     }
 }
 
 /// Currently not supported
-impl<M: WindowModel> Application<M> {
+impl<C: Component> Application<C> {
     pub(crate) fn about_to_wait(&mut self, _app_ctrl: &impl ApplicationControler) {}
 
     pub(crate) fn memory_warning(&mut self, _app_ctrl: &impl ApplicationControler) {}

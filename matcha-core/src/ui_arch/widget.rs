@@ -3,7 +3,7 @@ use std::any::Any;
 use renderer::render_node::RenderNode;
 
 use super::metrics;
-use crate::event::device_event::DeviceEvent;
+use crate::{event::device_event::DeviceEvent, ui_arch::ui_context::UiContext};
 
 // ----------------------------------------------------------------------------
 // Types
@@ -28,28 +28,23 @@ pub enum WidgetInteractionResult {
 // Key Structs and Traits
 // ----------------------------------------------------------------------------
 
-/// Context passed to `Widget` and `View` methods.
-///
-/// Currently a marker trait. Will expose layout utilities, font systems, etc. in future.
-pub trait WidgetContext {}
-
 pub trait View<T: 'static>: Send + Sync + Any {
-    fn build(&self, ctx: &dyn WidgetContext) -> WidgetPod<T>;
+    fn build(&self, ctx: &dyn UiContext) -> WidgetPod<T>;
 }
 
 pub trait Widget<T: 'static>: Send + Sync + Any {
     type View: View<T>;
 
-    fn update(&mut self, view: &Self::View, ctx: &dyn WidgetContext) -> WidgetInteractionResult;
+    fn update(&mut self, view: &Self::View, ctx: &dyn UiContext) -> WidgetInteractionResult;
 
     fn device_input(
         &mut self,
         bounds: [f32; 2],
         event: &DeviceEvent,
-        ctx: &dyn WidgetContext,
+        ctx: &dyn UiContext,
     ) -> (Option<T>, WidgetInteractionResult);
 
-    fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn WidgetContext) -> bool {
+    fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn UiContext) -> bool {
         let _ = ctx;
 
         0.0 <= position[0]
@@ -58,9 +53,9 @@ pub trait Widget<T: 'static>: Send + Sync + Any {
             && position[1] <= bounds[1]
     }
 
-    fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn WidgetContext) -> [f32; 2];
+    fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn UiContext) -> [f32; 2];
 
-    fn render(&mut self, bounds: [f32; 2], ctx: &dyn WidgetContext) -> RenderNode;
+    fn render(&mut self, bounds: [f32; 2], ctx: &dyn UiContext) -> RenderNode;
 }
 
 /// Wrapper trait to erase generic type T from Widget trait.
@@ -68,25 +63,25 @@ pub(super) trait AnyWidget<T>: Send + Sync + Any {
     fn try_update(
         &mut self,
         view: &dyn View<T>,
-        ctx: &dyn WidgetContext,
+        ctx: &dyn UiContext,
     ) -> Result<WidgetInteractionResult, WidgetUpdateError>;
 
     fn device_input(
         &mut self,
         bounds: [f32; 2],
         event: &DeviceEvent,
-        ctx: &dyn WidgetContext,
+        ctx: &dyn UiContext,
     ) -> (Option<T>, WidgetInteractionResult);
 
-    fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn WidgetContext) -> bool;
+    fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn UiContext) -> bool;
 
-    fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn WidgetContext) -> [f32; 2];
+    fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn UiContext) -> [f32; 2];
 
     fn render(
         &mut self,
         bounds: [f32; 2],
         /* TODO: background: Background, */
-        ctx: &dyn WidgetContext,
+        ctx: &dyn UiContext,
     ) -> RenderNode;
 }
 
@@ -98,7 +93,7 @@ where
     fn try_update(
         &mut self,
         view: &dyn View<T>,
-        ctx: &dyn WidgetContext,
+        ctx: &dyn UiContext,
     ) -> Result<WidgetInteractionResult, WidgetUpdateError> {
         let Some(view) = (view as &dyn Any).downcast_ref::<V>() else {
             return Err(WidgetUpdateError::TypeMismatch);
@@ -111,20 +106,20 @@ where
         &mut self,
         bounds: [f32; 2],
         event: &DeviceEvent,
-        ctx: &dyn WidgetContext,
+        ctx: &dyn UiContext,
     ) -> (Option<T>, WidgetInteractionResult) {
         Widget::device_input(self, bounds, event, ctx)
     }
 
-    fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn WidgetContext) -> bool {
+    fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn UiContext) -> bool {
         Widget::is_inside(self, bounds, position, ctx)
     }
 
-    fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn WidgetContext) -> [f32; 2] {
+    fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn UiContext) -> [f32; 2] {
         Widget::measure(self, constraints, ctx)
     }
 
-    fn render(&mut self, bounds: [f32; 2], ctx: &dyn WidgetContext) -> RenderNode {
+    fn render(&mut self, bounds: [f32; 2], ctx: &dyn UiContext) -> RenderNode {
         Widget::render(self, bounds, ctx)
     }
 }
@@ -182,7 +177,7 @@ impl<T: 'static> WidgetPod<T> {
     pub fn try_update(
         &mut self,
         view: &dyn View<T>,
-        ctx: &dyn WidgetContext,
+        ctx: &dyn UiContext,
     ) -> Result<WidgetInteractionResult, WidgetUpdateError> {
         self.widget.try_update(view, ctx)
     }
@@ -191,7 +186,7 @@ impl<T: 'static> WidgetPod<T> {
         &mut self,
         bounds: [f32; 2],
         event: &DeviceEvent,
-        ctx: &dyn WidgetContext,
+        ctx: &dyn UiContext,
     ) -> (Option<T>, WidgetInteractionResult) {
         let (event, interaction_result) = self.widget.device_input(bounds, event, ctx);
 
@@ -208,15 +203,15 @@ impl<T: 'static> WidgetPod<T> {
         (event, interaction_result)
     }
 
-    pub fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn WidgetContext) -> bool {
+    pub fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn UiContext) -> bool {
         self.widget.is_inside(bounds, position, ctx)
     }
 
-    pub fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn WidgetContext) -> [f32; 2] {
+    pub fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn UiContext) -> [f32; 2] {
         self.widget.measure(constraints, ctx)
     }
 
-    pub fn render(&mut self, bounds: [f32; 2], ctx: &dyn WidgetContext) -> RenderNode {
+    pub fn render(&mut self, bounds: [f32; 2], ctx: &dyn UiContext) -> RenderNode {
         if let Some(render_node) = &self.render_cache {
             return render_node.clone();
         }

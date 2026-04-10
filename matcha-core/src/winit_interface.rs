@@ -1,15 +1,15 @@
 use crate::{
     application::{Application, ApplicationCommand, ApplicationControler},
     event::window_event::WindowEvent,
-    ui_arch::window_model::WindowModel,
+    ui_arch::component::Component,
 };
 
-pub(crate) struct WinitInterface<M: WindowModel> {
-    pub(crate) application: Application<M>,
+pub(crate) struct WinitInterface<C: Component> {
+    pub(crate) application: Application<C>,
 }
 
-impl<M: WindowModel> WinitInterface<M> {
-    pub fn new(application: Application<M>) -> Self {
+impl<C: Component> WinitInterface<C> {
+    pub fn new(application: Application<C>) -> Self {
         Self { application }
     }
 
@@ -18,8 +18,8 @@ impl<M: WindowModel> WinitInterface<M> {
     }
 }
 
-impl<M: WindowModel> winit::application::ApplicationHandler<WinitUserMessage<M>>
-    for WinitInterface<M>
+impl<C: Component> winit::application::ApplicationHandler<WinitUserMessage<C>>
+    for WinitInterface<C>
 {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         self.application.resumed(event_loop);
@@ -174,7 +174,7 @@ impl<M: WindowModel> winit::application::ApplicationHandler<WinitUserMessage<M>>
     fn user_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
-        event: WinitUserMessage<M>,
+        event: WinitUserMessage<C>,
     ) {
         match event {
             WinitUserMessage::BackendMessage { msg } => {
@@ -220,9 +220,9 @@ impl<M: WindowModel> winit::application::ApplicationHandler<WinitUserMessage<M>>
     }
 }
 
-pub(crate) enum WinitUserMessage<M: WindowModel> {
+pub(crate) enum WinitUserMessage<C: Component> {
     BufferUpdated,
-    BackendMessage { msg: M::Message },
+    BackendMessage { msg: C::Message },
     EventLoopCommand { cmd: ApplicationCommand },
 }
 
@@ -230,8 +230,8 @@ pub(crate) enum WinitUserMessage<M: WindowModel> {
 
 impl ApplicationControler for winit::event_loop::ActiveEventLoop {}
 
-impl<M: WindowModel> crate::application::ApplicationLoopProxy<M::Message>
-    for winit::event_loop::EventLoopProxy<WinitUserMessage<M>>
+impl<C: Component> crate::application::ApplicationLoopProxy<C::Message>
+    for winit::event_loop::EventLoopProxy<WinitUserMessage<C>>
 {
 }
 
