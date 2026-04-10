@@ -1,98 +1,12 @@
-use std::{collections::HashMap, future::Future, sync::Arc};
+use std::sync::Arc;
 
-use parking_lot::Mutex;
 use renderer::RenderNode;
 
-use super::widget::{View, Widget, WidgetContext, WidgetInteractionResult, WidgetPod};
+use super::widget::{View, Widget, WidgetInteractionResult, WidgetPod};
 use crate::{
     event::device_event::DeviceEvent,
-    ui_arch::{metrics, widget::WidgetUpdateError},
+    ui_arch::{metrics, ui_context::UiContext, widget::WidgetUpdateError},
 };
-
-// ----------------------------------------------------------------------------
-// TaskHandler
-// ----------------------------------------------------------------------------
-
-/// Manages background tasks spawned by a [`Component`].
-///
-/// Passed as `&mut TaskHandler` to each [`Component`] method.
-///
-/// Tasks write UI state directly via [`SharedValue::store()`](shared_buffer::SharedValue::store),
-/// which automatically signals the event loop. Discrete commands from external
-/// sources are delivered through [`Component::update()`].
-pub struct TaskHandler {
-    tasks: HashMap<String, tokio::task::JoinHandle<()>>,
-}
-
-impl TaskHandler {
-    pub(crate) fn new() -> Self {
-        Self {
-            tasks: HashMap::new(),
-        }
-    }
-
-    /// Spawns a fire-and-forget background task.
-    ///
-    /// The task writes UI state by calling
-    /// [`SharedValue::store()`](shared_buffer::SharedValue::store) directly.
-    ///
-    /// Returns [`TaskError::AlreadyExists`] if a task with the same `id` is running.
-    pub fn spawn<F, Fut>(&mut self, id: impl Into<String>, task: F) -> Result<(), TaskError>
-    where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = ()> + Send + 'static,
-    {
-        let id = id.into();
-        if let Some(handle) = self.tasks.get(&id) {
-            if !handle.is_finished() {
-                return Err(TaskError::AlreadyExists);
-            }
-        }
-        let handle = tokio::spawn(task());
-        self.tasks.insert(id, handle);
-        Ok(())
-    }
-
-    /// Removes all finished task entries from the internal map.
-    pub fn gc(&mut self) {
-        self.tasks.retain(|_, h| !h.is_finished());
-    }
-
-    /// Aborts the task with the given `id`.
-    ///
-    /// Returns [`TaskError::NotFound`] if no such task exists.
-    pub fn abort(&mut self, id: impl Into<String>) -> Result<(), TaskError> {
-        let id = id.into();
-        if let Some(handle) = self.tasks.remove(&id) {
-            handle.abort();
-            Ok(())
-        } else {
-            Err(TaskError::NotFound)
-        }
-    }
-
-    /// Returns `true` if a task with the given `id` is currently running.
-    pub fn is_running(&self, id: &str) -> bool {
-        self.tasks
-            .get(id)
-            .map(|h| !h.is_finished())
-            .unwrap_or(false)
-    }
-}
-
-impl Drop for TaskHandler {
-    fn drop(&mut self) {
-        for (_, handle) in self.tasks.drain() {
-            handle.abort();
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum TaskError {
-    AlreadyExists,
-    NotFound,
-}
 
 // ----------------------------------------------------------------------------
 // Component
@@ -117,6 +31,10 @@ pub enum TaskError {
 ///
 /// All methods take `&self`, so a component can be shared as `Arc<C>` with
 /// the backend without requiring exclusive access.
+///
+/// # Spawning tasks
+///
+/// Use `ctx.runtime_handle().spawn(...)` to launch background tasks.
 pub trait Component: Send + Sync + 'static {
     /// Discrete commands delivered from the application layer.
     type Message: Send + Sync + 'static;
@@ -126,38 +44,23 @@ pub trait Component: Send + Sync + 'static {
     type InnerEvent: Send + Sync + 'static;
 
     /// Called once when the component is first attached to the widget tree.
-    fn setup(&self, task_handler: &mut TaskHandler, ctx: &dyn WidgetContext);
+    fn setup(&self, ctx: &dyn UiContext);
 
     /// Called when a discrete [`Message`](Component::Message) is received.
     ///
     /// Typically used to trigger background tasks or write to [`SharedValue`](shared_buffer::SharedValue)
     /// fields. A redraw occurs only if `store()` is called.
-    fn update(
-        &self,
-        task_handler: &mut TaskHandler,
-        message: Self::Message,
-        ctx: &dyn WidgetContext,
-    );
+    fn update(&self, message: Self::Message, ctx: &dyn UiContext);
 
     /// Builds the view tree from the current state.
-    fn view(&self, ctx: &dyn WidgetContext) -> Box<dyn View<Self::InnerEvent>>;
+    fn view(&self, ctx: &dyn UiContext) -> Box<dyn View<Self::InnerEvent>>;
 
     /// Translates a child widget's `InnerEvent` into an optional outward `Event`.
-    fn event(
-        &self,
-        task_handler: &mut TaskHandler,
-        event: Self::InnerEvent,
-        ctx: &dyn WidgetContext,
-    ) -> Option<Self::Event>;
+    fn event(&self, event: Self::InnerEvent, ctx: &dyn UiContext) -> Option<Self::Event>;
 
     /// Handles a raw device event (keyboard, mouse, etc.). Default implementation is a no-op.
-    fn input(
-        &self,
-        task_handler: &mut TaskHandler,
-        device_event: &DeviceEvent,
-        ctx: &dyn WidgetContext,
-    ) {
-        let _ = (task_handler, device_event, ctx);
+    fn input(&self, device_event: &DeviceEvent, ctx: &dyn UiContext) {
+        let _ = (device_event, ctx);
     }
 }
 
@@ -165,14 +68,13 @@ pub trait Component: Send + Sync + 'static {
 // ComponentPod
 // ----------------------------------------------------------------------------
 
-/// Owns a [`Component`] together with its [`TaskHandler`].
+/// Owns a [`Component`].
 ///
 /// Held by the UI framework. Use [`ComponentPod::arc()`] to share the component
 /// state with the backend.
 pub struct ComponentPod<C: Component> {
     label: Option<String>,
     component: Arc<C>,
-    task_handler: Arc<Mutex<TaskHandler>>,
 }
 
 impl<C: Component> ComponentPod<C> {
@@ -180,7 +82,6 @@ impl<C: Component> ComponentPod<C> {
         Self {
             label: label.map(|s| s.to_string()),
             component: Arc::new(component),
-            task_handler: Arc::new(Mutex::new(TaskHandler::new())),
         }
     }
 
@@ -195,21 +96,19 @@ impl<C: Component> ComponentPod<C> {
 
 impl<C: Component> ComponentPod<C> {
     /// Calls [`Component::setup`]. Invoke once after construction.
-    pub fn setup(&self, ctx: &dyn WidgetContext) {
-        self.component.setup(&mut self.task_handler.lock(), ctx);
+    pub fn setup(&self, ctx: &dyn UiContext) {
+        self.component.setup(ctx);
     }
 
     /// Delivers a discrete [`Message`](Component::Message) to the component.
-    pub fn update(&self, message: C::Message, ctx: &dyn WidgetContext) {
-        self.component
-            .update(&mut self.task_handler.lock(), message, ctx);
+    pub fn update(&self, message: C::Message, ctx: &dyn UiContext) {
+        self.component.update(message, ctx);
     }
 
     /// Builds a [`ComponentView`] from the current state.
-    pub fn view(&self, ctx: &dyn WidgetContext) -> ComponentView<C> {
+    pub fn view(&self, ctx: &dyn UiContext) -> ComponentView<C> {
         ComponentView {
             label: self.label.clone(),
-            task_handler: self.task_handler.clone(),
             component: self.component.clone(),
             inner_view: self.component.view(ctx),
         }
@@ -222,17 +121,15 @@ impl<C: Component> ComponentPod<C> {
 
 pub struct ComponentView<C: Component> {
     label: Option<String>,
-    task_handler: Arc<Mutex<TaskHandler>>,
     component: Arc<C>,
     inner_view: Box<dyn View<C::InnerEvent>>,
 }
 
 impl<C: Component> View<C::Event> for ComponentView<C> {
-    fn build(&self, ctx: &dyn WidgetContext) -> WidgetPod<C::Event> {
+    fn build(&self, ctx: &dyn UiContext) -> WidgetPod<C::Event> {
         WidgetPod::new(
             self.label.as_deref(),
             ComponentWidget {
-                task_handler: self.task_handler.clone(),
                 component: self.component.clone(),
                 inner_widget: self.inner_view.build(ctx),
             },
@@ -245,7 +142,6 @@ impl<C: Component> View<C::Event> for ComponentView<C> {
 // ----------------------------------------------------------------------------
 
 struct ComponentWidget<C: Component> {
-    task_handler: Arc<Mutex<TaskHandler>>,
     component: Arc<C>,
     inner_widget: WidgetPod<C::InnerEvent>,
 }
@@ -253,7 +149,7 @@ struct ComponentWidget<C: Component> {
 impl<C: Component> Widget<C::Event> for ComponentWidget<C> {
     type View = ComponentView<C>;
 
-    fn update(&mut self, view: &Self::View, ctx: &dyn WidgetContext) -> WidgetInteractionResult {
+    fn update(&mut self, view: &Self::View, ctx: &dyn UiContext) -> WidgetInteractionResult {
         match self.inner_widget.try_update(view.inner_view.as_ref(), ctx) {
             Ok(interaction_result) => interaction_result,
             Err(WidgetUpdateError::TypeMismatch) => {
@@ -267,32 +163,29 @@ impl<C: Component> Widget<C::Event> for ComponentWidget<C> {
         &mut self,
         bounds: [f32; 2],
         event: &DeviceEvent,
-        ctx: &dyn WidgetContext,
+        ctx: &dyn UiContext,
     ) -> (Option<C::Event>, WidgetInteractionResult) {
-        self.component
-            .input(&mut self.task_handler.lock(), event, ctx);
+        self.component.input(event, ctx);
 
         let (inner_event, interaction_result) = self.inner_widget.device_input(bounds, event, ctx);
 
         if let Some(inner_event) = inner_event {
-            let event = self
-                .component
-                .event(&mut self.task_handler.lock(), inner_event, ctx);
+            let event = self.component.event(inner_event, ctx);
             (event, interaction_result)
         } else {
             (None, interaction_result)
         }
     }
 
-    fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn WidgetContext) -> bool {
+    fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn UiContext) -> bool {
         self.inner_widget.is_inside(bounds, position, ctx)
     }
 
-    fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn WidgetContext) -> [f32; 2] {
+    fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn UiContext) -> [f32; 2] {
         self.inner_widget.measure(constraints, ctx)
     }
 
-    fn render(&mut self, bounds: [f32; 2], ctx: &dyn WidgetContext) -> RenderNode {
+    fn render(&mut self, bounds: [f32; 2], ctx: &dyn UiContext) -> RenderNode {
         self.inner_widget.render(bounds, ctx)
     }
 }

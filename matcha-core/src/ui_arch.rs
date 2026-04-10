@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Mutex, Weak},
+};
 
 use crate::application::ApplicationControler;
 use crate::event::device_event::DeviceEvent;
@@ -9,43 +12,37 @@ use crate::window_manager::WindowManager;
 
 pub mod component;
 pub mod metrics;
+pub mod ui_context;
 pub mod widget;
-pub mod window_model;
+pub mod window;
 
-use widget::{WidgetContext, WidgetUpdateError};
-use window_model::{WindowDecl, WindowModel, WindowModelPod, WindowState};
-
-// ----------------------------------------------------------------------------
-// Context implementations (MVP: empty struct)
-// ----------------------------------------------------------------------------
-
-struct UiArchWidgetContext;
-impl WidgetContext for UiArchWidgetContext {}
+use component::{Component, ComponentPod};
+use window::AnyWindowWidgetInstance;
 
 // ----------------------------------------------------------------------------
 // UiArch
 // ----------------------------------------------------------------------------
 
-pub struct UiArch<M: WindowModel> {
-    model_pod: WindowModelPod<M>,
-    window_states: Vec<WindowState<M::Event>>,
+pub struct UiArch<C: Component> {
+    root: ComponentPod<C>,
+    /// Keyed by WindowId. The strong Arc lives in the WindowWidget inside the tree;
+    /// UiArch only holds a Weak so that dropping a window from the view tree
+    /// automatically destroys the OS window.
+    window_registry: HashMap<WindowId, Weak<Mutex<dyn AnyWindowWidgetInstance>>>,
 }
 
-impl<M: WindowModel> UiArch<M> {
-    pub fn new(model: M) -> Self {
+impl<C: Component> UiArch<C> {
+    pub fn new(root: C) -> Self {
         Self {
-            model_pod: WindowModelPod::new(None, model),
-            window_states: Vec::new(),
+            root: ComponentPod::new(None, root),
+            window_registry: HashMap::new(),
         }
     }
 }
 
 /// Lifecycle methods
-impl<M: WindowModel> UiArch<M> {
-    pub(crate) fn init(&mut self, _app_ctrl: &impl ApplicationControler) {
-        let ctx = UiArchWidgetContext;
-        self.model_pod.setup(&ctx);
-    }
+impl<C: Component> UiArch<C> {
+    pub(crate) fn init(&mut self, _app_ctrl: &impl ApplicationControler) {}
 
     pub(crate) fn resumed(&mut self, _app_ctrl: &impl ApplicationControler) {}
 
@@ -55,83 +52,35 @@ impl<M: WindowModel> UiArch<M> {
 }
 
 /// GPU Device Lost
-impl<M: WindowModel> UiArch<M> {
+impl<C: Component> UiArch<C> {
     pub(crate) fn gpu_device_lost(&mut self, _app_ctrl: &impl ApplicationControler) {}
 }
 
 /// UI update
-impl<M: WindowModel> UiArch<M> {
-    /// Rebuilds the window list and reconciles native windows + widget trees.
+impl<C: Component> UiArch<C> {
+    /// Rebuilds the view tree and reconciles the window registry.
     ///
     /// Called on every `BufferUpdated` event or continuous-render tick.
+    /// The concrete `UiContext` implementation (provided by the platform integration)
+    /// collects `register_window_instance` calls during tree traversal and updates
+    /// `window_registry` accordingly.
     pub(crate) fn update(
         &mut self,
-        window_manager: &WindowManager,
-        app_ctrl: &impl ApplicationControler,
-        gpu: &gpu_utils::gpu::Gpu,
-    ) {
-        let widget_ctx = UiArchWidgetContext;
-        let new_decls = self.model_pod.windows(&widget_ctx);
-
-        // Drain existing states into a key-indexed map for O(1) lookup.
-        let mut old_states: HashMap<String, WindowState<M::Event>> = self
-            .window_states
-            .drain(..)
-            .map(|s| (s.key.clone(), s))
-            .collect();
-
-        let instance = gpu.instance();
-
-        for decl in new_decls {
-            let state = if let Some(mut existing) = old_states.remove(&decl.key) {
-                // Same key → diff-update the widget tree.
-                match &mut existing.widget_pod {
-                    Some(pod) => {
-                        if pod.try_update(decl.root.as_ref(), &widget_ctx).is_err() {
-                            existing.widget_pod = Some(decl.root.build(&widget_ctx));
-                        }
-                    }
-                    None => {
-                        existing.widget_pod = Some(decl.root.build(&widget_ctx));
-                    }
-                }
-                existing
-            } else {
-                // New key → create a native window and build the widget tree.
-                let handle = gpu.with_device_queue(|device, _| {
-                    window_manager.create_window(app_ctrl, &decl.config, instance, device)
-                });
-
-                match handle {
-                    Ok(handle) => WindowState {
-                        key: decl.key,
-                        handle,
-                        widget_pod: Some(decl.root.build(&widget_ctx)),
-                    },
-                    Err(e) => {
-                        log::error!("Failed to create window: {e}");
-                        continue;
-                    }
-                }
-            };
-
-            self.window_states.push(state);
-        }
-
-        // States remaining in `old_states` are dropped here.
-        // WindowHandle::Drop removes them from WindowManager automatically.
-    }
+        _window_manager: &WindowManager,
+        _app_ctrl: &impl ApplicationControler,
+        _gpu: &gpu_utils::gpu::Gpu,
+    ) {}
 }
 
 /// Event handlers
-impl<M: WindowModel> UiArch<M> {
+impl<C: Component> UiArch<C> {
     pub(crate) fn window_event(
         &mut self,
         _app_ctrl: &impl ApplicationControler,
         _window_id: WindowId,
         _event: WindowEvent,
     ) -> bool {
-        false // TODO: route to matching WindowState's widget_pod
+        todo!()
     }
 
     pub(crate) fn device_event(
@@ -139,8 +88,8 @@ impl<M: WindowModel> UiArch<M> {
         _app_ctrl: &impl ApplicationControler,
         _window_id: WindowId,
         _event: DeviceEvent,
-    ) -> bool {
-        false // TODO
+    ) -> Option<C::Event> {
+        todo!()
     }
 
     pub(crate) fn raw_device_event(
@@ -151,8 +100,7 @@ impl<M: WindowModel> UiArch<M> {
     ) {
     }
 
-    pub(crate) fn user_event(&mut self, _app_ctrl: &impl ApplicationControler, msg: M::Message) {
-        let ctx = UiArchWidgetContext;
-        self.model_pod.update(msg, &ctx);
+    pub(crate) fn user_event(&mut self, _app_ctrl: &impl ApplicationControler, _msg: C::Message) {
+        todo!()
     }
 }
