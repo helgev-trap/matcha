@@ -16,6 +16,7 @@ thiserror = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true }
 bytemuck = { workspace = true }
+arc-swap = "1.8.2"
 
 [lints]
 workspace = true

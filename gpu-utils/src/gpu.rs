@@ -1,3 +1,4 @@
+use arc_swap::ArcSwap;
 use fxhash::FxBuildHasher;
 use log::{debug, error, trace, warn};
 use parking_lot::{Mutex, RwLock};
@@ -60,30 +61,21 @@ pub struct Gpu {
 
     preferred_surface_format: wgpu::TextureFormat,
 
-    device_queue: RwLock<GpuDeviceQueue>,
+    device_queue: ArcSwap<GpuDeviceQueue>,
 
     device_lost: AtomicBool,
     device_lost_details: RwLock<Option<(wgpu::DeviceLostReason, String)>>,
     device_lost_callback: Mutex<
-        HashMap<
-            CallbackId,
-            Arc<dyn Fn(&wgpu::DeviceLostReason, &str) + Send + Sync>,
-            FxBuildHasher,
-        >,
+        HashMap<CallbackId, Arc<dyn Fn(wgpu::DeviceLostReason, &str) + Send + Sync>, FxBuildHasher>,
     >,
 
     /// Whether automatic recovery is allowed
     auto_recover_enabled: AtomicBool,
     /// Whether a recovery attempt is currently running
     is_recovering: AtomicBool,
-    device_recover_callback: Mutex<
-        HashMap<CallbackId, Arc<dyn Fn(wgpu::Device, wgpu::Queue) + Send + Sync>, FxBuildHasher>,
-    >,
     device_recover_failed_callback: Mutex<
         HashMap<CallbackId, Arc<dyn Fn(&wgpu::RequestDeviceError) + Send + Sync>, FxBuildHasher>,
     >,
-
-    weak_self: Weak<Gpu>,
 }
 
 struct GpuDeviceQueue {
@@ -157,7 +149,7 @@ impl Gpu {
 
         // Build Arc<Gpu> with cyclic weak reference so callbacks can upgrade to Arc<Gpu>.
         let arc_self = Arc::new_cyclic(|weak: &Weak<Gpu>| {
-            let device_queue = RwLock::new(GpuDeviceQueue {
+            let device_queue = ArcSwap::from_pointee(GpuDeviceQueue {
                 device: device.clone(),
                 queue: queue.clone(),
             });
@@ -178,9 +170,7 @@ impl Gpu {
                 device_lost_callback: Default::default(),
                 auto_recover_enabled: AtomicBool::new(auto_recover_enabled),
                 is_recovering: AtomicBool::new(false),
-                device_recover_callback: Default::default(),
                 device_recover_failed_callback: Default::default(),
-                weak_self: weak.clone(),
             }
         });
 
@@ -191,10 +181,10 @@ impl Gpu {
     /// Add a callback to be invoked when the device is lost.
     pub fn add_device_lost_callback(
         &self,
-        callback: impl Fn(&wgpu::DeviceLostReason, &str) + Send + Sync + 'static,
+        callback: impl Fn(wgpu::DeviceLostReason, &str) + Send + Sync + 'static,
     ) -> CallbackId {
         let id = CallbackId::new();
-        let callback: Arc<dyn Fn(&wgpu::DeviceLostReason, &str) + Send + Sync> = Arc::new(callback);
+        let callback: Arc<dyn Fn(wgpu::DeviceLostReason, &str) + Send + Sync> = Arc::new(callback);
         self.device_lost_callback
             .lock()
             .insert(id, Arc::clone(&callback));
@@ -209,29 +199,6 @@ impl Gpu {
     /// Remove all previously added device-lost callbacks.
     pub fn remove_all_device_lost_callbacks(&self) {
         self.device_lost_callback.lock().clear();
-    }
-
-    /// Add a callback to be invoked after successful device recovery.
-    pub fn add_device_recover_callback(
-        &self,
-        callback: impl Fn(wgpu::Device, wgpu::Queue) + Send + Sync + 'static,
-    ) -> CallbackId {
-        let id = CallbackId::new();
-        let callback: Arc<dyn Fn(wgpu::Device, wgpu::Queue) + Send + Sync> = Arc::new(callback);
-        self.device_recover_callback
-            .lock()
-            .insert(id, Arc::clone(&callback));
-        id
-    }
-
-    /// Remove a previously added device-recover callback by its ID.
-    pub fn remove_device_recover_callback(&self, id: CallbackId) {
-        self.device_recover_callback.lock().remove(&id);
-    }
-
-    /// Remove all previously added device-recover callbacks.
-    pub fn remove_all_device_recover_callbacks(&self) {
-        self.device_recover_callback.lock().clear();
     }
 
     /// Add a callback to be invoked when device recovery fails.
@@ -263,7 +230,7 @@ impl Gpu {
     ///
     /// This avoids races where caller clones device and queue separately and they get swapped in between.
     pub fn with_device_queue<R>(&self, f: impl FnOnce(&wgpu::Device, &wgpu::Queue) -> R) -> R {
-        let guard = self.device_queue.read();
+        let guard = self.device_queue.load();
         f(&guard.device, &guard.queue)
     }
 
@@ -277,14 +244,12 @@ impl Gpu {
         &self.adapter
     }
 
-    /// Clone and return the current device.
-    pub fn device(&self) -> wgpu::Device {
-        self.device_queue.read().device.clone()
-    }
-
-    /// Clone and return the current queue.
-    pub fn queue(&self) -> wgpu::Queue {
-        self.device_queue.read().queue.clone()
+    /// Clone and return the current device and queue together.
+    ///
+    /// This avoids races where caller clones device and queue separately and they get swapped in between.
+    pub fn device_and_queue(&self) -> (wgpu::Device, wgpu::Queue) {
+        let guard = self.device_queue.load();
+        (guard.device.clone(), guard.queue.clone())
     }
 
     /// Get features requested at creation.
@@ -332,6 +297,78 @@ impl Gpu {
     pub fn is_recovering(&self) -> bool {
         self.is_recovering.load(Ordering::Acquire)
     }
+
+    /// Attempt manual recovery of the device. Returns true if recovery was started, false if already in progress.
+    pub fn recover(self: &Arc<Self>) -> bool {
+        if self
+            .is_recovering
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            debug!("Gpu::recover: starting recovery workflow");
+            let arc_self = Arc::clone(self);
+
+            std::thread::spawn(move || {
+                // Prevent tight CPU-hogging loops if recovery fails repeatedly or device is lost instantly.
+                std::thread::sleep(std::time::Duration::from_millis(200));
+
+                let result = futures::executor::block_on(arc_self.adapter.request_device(
+                    &wgpu::DeviceDescriptor {
+                        label: Some("Gpu: request device (recovery)"),
+                        required_features: arc_self.features,
+                        required_limits: arc_self.limits.clone(),
+                        memory_hints: wgpu::MemoryHints::default(),
+                        trace: wgpu::Trace::Off,
+                        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                    },
+                ));
+
+                match result {
+                    Ok((new_device, new_queue)) => {
+                        trace!("Gpu::recover: recovery device acquired");
+                        // Swap new device and queue.
+                        arc_self.device_queue.store(Arc::new(GpuDeviceQueue {
+                            device: new_device.clone(),
+                            queue: new_queue.clone(),
+                        }));
+
+                        // Reset lost flags BEFORE installing callbacks.
+                        // If the new device is already lost, installing callbacks will synchronously
+                        // invoke handle_device_lost. Resetting flags first ensures that the second
+                        // device loss is correctly recorded and can trigger another recovery attempt.
+                        *arc_self.device_lost_details.write() = None;
+                        arc_self.device_lost.store(false, Ordering::Release);
+                        arc_self.is_recovering.store(false, Ordering::Release);
+
+                        // Reinstall callbacks on the new device.
+                        let weak_self = Arc::downgrade(&arc_self);
+                        Self::install_device_callbacks(&new_device, &weak_self);
+                        Self::install_uncaptured_error_handler(&new_device);
+
+                        debug!("Gpu::recover: recovery completed successfully");
+                    }
+                    Err(e) => {
+                        error!("Gpu::recover: recovery failed: {e:?}");
+                        // Mark recovery finished.
+                        arc_self.is_recovering.store(false, Ordering::Release);
+
+                        let callbacks: Vec<_> = arc_self
+                            .device_recover_failed_callback
+                            .lock()
+                            .values()
+                            .cloned()
+                            .collect();
+                        for cb in callbacks {
+                            cb(&e);
+                        }
+                    }
+                }
+            });
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /* ----------------------
@@ -371,98 +408,32 @@ impl Gpu {
     /// NOTE: Recovery uses a dedicated thread and `futures::executor::block_on` to avoid blocking
     /// the wgpu-internal callback thread.
     /// TODO: allow injecting an async executor instead of spawning a dedicated thread that blocks.
-    fn handle_device_lost(&self, reason: wgpu::DeviceLostReason, s: String) {
+    fn handle_device_lost(self: &Arc<Self>, reason: wgpu::DeviceLostReason, s: String) {
         // Mark device as lost
         {
-            self.device_lost.store(true, Ordering::Release);
             *self.device_lost_details.write() = Some((reason, s.clone()));
+            self.device_lost.store(true, Ordering::Release);
         }
         warn!("Gpu::handle_device_lost: device lost with reason={reason:?}, message={s}");
 
-        // Call user callback if provided
+        // Call user callback if provided (Spawned on a separate thread to prevent lock re-entrancy / deadlocks)
         let callbacks: Vec<_> = self.device_lost_callback.lock().values().cloned().collect();
-        for cb in callbacks {
-            cb(&reason, &s);
-        }
-
-        // Attempt automatic recovery if enabled and not already recovering
-        if self.auto_recover_enabled.load(Ordering::Acquire)
-            && self
-                .is_recovering
-                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-        {
-            debug!("Gpu::handle_device_lost: starting recovery workflow");
-            // Attempt recovery on a dedicated thread.
-            let arc_self = self
-                .weak_self
-                .upgrade()
-                .expect("`Gpu::handle_device_lost` takes &self, so weak_self must be valid");
-
+        if !callbacks.is_empty() {
+            let s_clone = s.clone();
             std::thread::spawn(move || {
-                let result = futures::executor::block_on(arc_self.adapter.request_device(
-                    &wgpu::DeviceDescriptor {
-                        label: Some("Gpu: request device (recovery)"),
-                        required_features: arc_self.features,
-                        required_limits: arc_self.limits.clone(),
-                        memory_hints: wgpu::MemoryHints::default(),
-                        trace: wgpu::Trace::Off,
-                        experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                    },
-                ));
-
-                match result {
-                    Ok((new_device, new_queue)) => {
-                        trace!("Gpu::handle_device_lost: recovery device acquired");
-                        // Swap new device and queue under write lock.
-                        {
-                            let mut dq = arc_self.device_queue.write();
-                            dq.device = new_device.clone();
-                            dq.queue = new_queue.clone();
-                        }
-
-                        // Reinstall callbacks on the new device.
-                        Self::install_device_callbacks(&new_device, &arc_self.weak_self);
-                        Self::install_uncaptured_error_handler(&new_device);
-
-                        // Reset lost flags.
-                        arc_self.device_lost.store(false, Ordering::Release);
-                        *arc_self.device_lost_details.write() = None;
-
-                        // Mark recovery finished.
-                        arc_self.is_recovering.store(false, Ordering::Release);
-                        debug!("Gpu::handle_device_lost: recovery completed successfully");
-
-                        // Invoke recovery callback if provided.
-                        let callbacks: Vec<_> = arc_self
-                            .device_recover_callback
-                            .lock()
-                            .values()
-                            .cloned()
-                            .collect();
-                        for cb in callbacks {
-                            cb(new_device.clone(), new_queue.clone());
-                        }
-                    }
-                    Err(e) => {
-                        error!("Gpu::handle_device_lost: recovery failed: {e:?}");
-                        // Mark recovery finished.
-                        arc_self.is_recovering.store(false, Ordering::Release);
-
-                        let callbacks: Vec<_> = arc_self
-                            .device_recover_failed_callback
-                            .lock()
-                            .values()
-                            .cloned()
-                            .collect();
-                        for cb in callbacks {
-                            cb(&e);
-                        }
-                    }
+                for cb in callbacks {
+                    cb(reason, &s_clone);
                 }
             });
+        }
+
+        // Attempt automatic recovery if enabled
+        if self.auto_recover_enabled.load(Ordering::Acquire) {
+            if !self.recover() {
+                trace!("Gpu::handle_device_lost: auto recovery already in progress");
+            }
         } else {
-            trace!("Gpu::handle_device_lost: auto recovery disabled or already in progress");
+            trace!("Gpu::handle_device_lost: auto recovery disabled");
         }
     }
 }

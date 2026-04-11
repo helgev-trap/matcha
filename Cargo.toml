@@ -7,6 +7,7 @@ members = [
     "text-render",
     "utils",
     "gpu-utils",
+    "shared-buffer",
 ]
 resolver = "3"
 
@@ -18,6 +19,7 @@ version = "0.0.5"
 matcha = { path = "matcha" }
 matcha-core = { path = "matcha-core" }
 matcha-widgets = { path = "matcha-widgets" }
+shared-buffer = { path = "shared-buffer" }
 renderer = { path = "renderer" }
 text-render = { path = "text-render" }
 utils = { path = "utils" }
@@ -36,8 +38,11 @@ async-trait = "0.1.88"
 futures = "0.3.31"
 parking_lot = { version = "0.12.3" }
 
-# winit and accessibility
+# window
 winit = "0.30"
+baseview = { git = "https://github.com/RustAudio/baseview.git" }
+
+# accessibility
 accesskit = "0.21"
 accesskit_winit = { version = "0.29", features = ["tokio"] }
 
@@ -53,7 +58,7 @@ nalgebra = { version = "0.34", features = ["bytemuck"] }
 image = "0.25"
 
 # font
-suzuri = { git = "https://github.com/helgev-traP/suzuri.git", branch = "main", features = ["wgpu"] }
+suzuri =  { version = "0.2.1", features = ["wgpu"] }
 
 # other
 rand = "0.9"

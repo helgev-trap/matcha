@@ -1,22 +1,13 @@
-// application entry point. wrapper of winit_instance.
-pub mod app;
+#[cfg(all(feature = "winit", feature = "baseview"))]
+compile_error!("feature \"winit\" and feature \"baseview\" cannot be enabled at the same time");
 
-mod application_instance;
-mod rendering_loop;
-mod window_surface;
-mod window_ui;
-mod winit_instance;
+pub mod application;
+pub mod event;
+pub mod event_sender;
+pub mod renderer;
+pub mod ui_arch;
+pub mod window;
+pub mod window_manager;
 
-// widget system
-pub mod backend;
-pub mod context;
-pub mod ui;
-// debug / profiling config
-pub mod debug_config;
-
-// winit event handling
-pub mod device_input;
-
-// types
-pub mod color;
-pub mod metrics;
+#[cfg(feature = "winit")]
+pub(crate) mod winit_interface;
