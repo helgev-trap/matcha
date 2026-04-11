@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use crate::backend::Backend;
 use crate::event::device_event::{DeviceEvent, DeviceEventState};
 use crate::event::raw_device_event::{RawDeviceEvent, RawDeviceId};
 use crate::event::window_event::{WindowEvent, WindowEventState};
+use crate::event_sender::{EventReceiver, EventSender};
 use crate::ui_arch::component::Component;
 use crate::window::WindowId;
 use crate::window_manager::WindowManager;
@@ -20,8 +20,9 @@ pub struct Application<C: Component> {
 
     window_manager: Arc<WindowManager>,
 
-    /// Backend that receives outward events from the widget tree.
-    backend: Arc<dyn Backend<C::Event> + Send + Sync>,
+    /// Sender handle shared with every `UiContext` instance.
+    /// The matching `EventReceiver` is returned from `Application::new()`.
+    event_sender: EventSender,
 
     /// Way to send events to the event loop from outside.
     /// This is ensured to be Some after calling `Application::run()`
@@ -30,10 +31,11 @@ pub struct Application<C: Component> {
 
 /// Construction and running
 impl<C: Component> Application<C> {
-    pub fn new(
-        model: C,
-        backend: Arc<dyn Backend<C::Event> + Send + Sync>,
-    ) -> Self {
+    /// Creates a new `Application` and returns the paired `EventReceiver`.
+    ///
+    /// Events emitted by widgets via `ctx.emit_event()` or `ctx.event_sender().emit()`
+    /// are received from `EventReceiver`.
+    pub fn new(model: C) -> (Self, EventReceiver) {
         todo!()
     }
 
@@ -104,12 +106,7 @@ impl<C: Component> Application<C> {
                 let event = window.device_event_state.process_event(&event);
 
                 if let Some(event) = event {
-                    if let Some(out_event) = self.ui.device_event(app_ctrl, window_id, event) {
-                        let backend = self.backend.clone();
-                        tokio::spawn(async move {
-                            backend.send_event(out_event).await;
-                        });
-                    }
+                    self.ui.device_event(app_ctrl, window_id, event);
                 }
             }));
     }

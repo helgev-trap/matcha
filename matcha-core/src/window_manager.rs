@@ -158,4 +158,8 @@ impl WindowHandle {
     pub fn id(&self) -> WindowId {
         self.id
     }
+
+    pub fn size(&self) -> [f32; 2] {
+        todo!()
+    }
 }

@@ -20,8 +20,6 @@ use crate::{
 /// 2. [`view`](Component::view) is called to build the widget tree.
 /// 3. [`update`](Component::update) is called when a discrete [`Message`](Component::Message)
 ///    arrives from the application layer.
-/// 4. [`event`](Component::event) translates a child widget's `InnerEvent` into an outward
-///    `Event`, optionally bubbling it up to a parent.
 ///
 /// # State management
 ///
@@ -35,13 +33,14 @@ use crate::{
 /// # Spawning tasks
 ///
 /// Use `ctx.runtime_handle().spawn(...)` to launch background tasks.
+///
+/// # Events
+///
+/// Widgets emit events via `ctx.emit_event(Box<dyn Any + Send>)` rather than
+/// returning typed events. The application layer receives and downcasts them.
 pub trait Component: Send + Sync + 'static {
     /// Discrete commands delivered from the application layer.
     type Message: Send + Sync + 'static;
-    /// Event propagated upward to the parent component.
-    type Event: Send + Sync + 'static;
-    /// Event emitted by child widgets, consumed by [`event()`](Component::event).
-    type InnerEvent: Send + Sync + 'static;
 
     /// Called once when the component is first attached to the widget tree.
     fn setup(&self, ctx: &dyn UiContext);
@@ -53,10 +52,7 @@ pub trait Component: Send + Sync + 'static {
     fn update(&self, message: Self::Message, ctx: &dyn UiContext);
 
     /// Builds the view tree from the current state.
-    fn view(&self, ctx: &dyn UiContext) -> Box<dyn View<Self::InnerEvent>>;
-
-    /// Translates a child widget's `InnerEvent` into an optional outward `Event`.
-    fn event(&self, event: Self::InnerEvent, ctx: &dyn UiContext) -> Option<Self::Event>;
+    fn view(&self, ctx: &dyn UiContext) -> Box<dyn View>;
 
     /// Handles a raw device event (keyboard, mouse, etc.). Default implementation is a no-op.
     fn input(&self, device_event: &DeviceEvent, ctx: &dyn UiContext) {
@@ -122,11 +118,11 @@ impl<C: Component> ComponentPod<C> {
 pub struct ComponentView<C: Component> {
     label: Option<String>,
     component: Arc<C>,
-    inner_view: Box<dyn View<C::InnerEvent>>,
+    inner_view: Box<dyn View>,
 }
 
-impl<C: Component> View<C::Event> for ComponentView<C> {
-    fn build(&self, ctx: &dyn UiContext) -> WidgetPod<C::Event> {
+impl<C: Component> View for ComponentView<C> {
+    fn build(&self, ctx: &dyn UiContext) -> WidgetPod {
         WidgetPod::new(
             self.label.as_deref(),
             ComponentWidget {
@@ -143,10 +139,10 @@ impl<C: Component> View<C::Event> for ComponentView<C> {
 
 struct ComponentWidget<C: Component> {
     component: Arc<C>,
-    inner_widget: WidgetPod<C::InnerEvent>,
+    inner_widget: WidgetPod,
 }
 
-impl<C: Component> Widget<C::Event> for ComponentWidget<C> {
+impl<C: Component> Widget for ComponentWidget<C> {
     type View = ComponentView<C>;
 
     fn update(&mut self, view: &Self::View, ctx: &dyn UiContext) -> WidgetInteractionResult {
@@ -164,17 +160,9 @@ impl<C: Component> Widget<C::Event> for ComponentWidget<C> {
         bounds: [f32; 2],
         event: &DeviceEvent,
         ctx: &dyn UiContext,
-    ) -> (Option<C::Event>, WidgetInteractionResult) {
+    ) -> WidgetInteractionResult {
         self.component.input(event, ctx);
-
-        let (inner_event, interaction_result) = self.inner_widget.device_input(bounds, event, ctx);
-
-        if let Some(inner_event) = inner_event {
-            let event = self.component.event(inner_event, ctx);
-            (event, interaction_result)
-        } else {
-            (None, interaction_result)
-        }
+        self.inner_widget.device_input(bounds, event, ctx)
     }
 
     fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn UiContext) -> bool {
