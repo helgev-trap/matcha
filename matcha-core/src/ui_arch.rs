@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Mutex, Weak},
+    sync::{Arc, Mutex, Weak},
 };
 
 use crate::application::ApplicationControler;
@@ -17,6 +17,7 @@ pub mod widget;
 pub mod window;
 
 use component::{Component, ComponentPod};
+use widget::WidgetPod;
 use window::AnyWindowWidgetInstance;
 
 // ----------------------------------------------------------------------------
@@ -25,17 +26,26 @@ use window::AnyWindowWidgetInstance;
 
 pub struct UiArch<C: Component> {
     root: ComponentPod<C>,
+
+    /// The built widget tree for the root component.
+    /// `None` until the first `update()` call.
+    widget_pod: Option<WidgetPod>,
+
     /// Keyed by WindowId. The strong Arc lives in the WindowWidget inside the tree;
     /// UiArch only holds a Weak so that dropping a window from the view tree
     /// automatically destroys the OS window.
-    window_registry: HashMap<WindowId, Weak<Mutex<dyn AnyWindowWidgetInstance>>>,
+    ///
+    /// Wrapped in `Arc<Mutex<...>>` so that a `UiContext` impl created during
+    /// `update()` can write to it directly without borrow-conflict with `widget_pod`.
+    window_registry: Arc<Mutex<HashMap<WindowId, Weak<Mutex<dyn AnyWindowWidgetInstance>>>>>,
 }
 
 impl<C: Component> UiArch<C> {
     pub fn new(root: C) -> Self {
         Self {
             root: ComponentPod::new(None, root),
-            window_registry: HashMap::new(),
+            widget_pod: None,
+            window_registry: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -79,7 +89,7 @@ impl<C: Component> UiArch<C> {
         _app_ctrl: &impl ApplicationControler,
         _window_id: WindowId,
         _event: WindowEvent,
-    ) -> bool {
+    ) {
         todo!()
     }
 
@@ -88,7 +98,7 @@ impl<C: Component> UiArch<C> {
         _app_ctrl: &impl ApplicationControler,
         _window_id: WindowId,
         _event: DeviceEvent,
-    ) -> Option<C::Event> {
+    ) {
         todo!()
     }
 

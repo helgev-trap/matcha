@@ -28,12 +28,12 @@ pub enum WidgetInteractionResult {
 // Key Structs and Traits
 // ----------------------------------------------------------------------------
 
-pub trait View<T: 'static>: Send + Sync + Any {
-    fn build(&self, ctx: &dyn UiContext) -> WidgetPod<T>;
+pub trait View: Send + Sync + Any {
+    fn build(&self, ctx: &dyn UiContext) -> WidgetPod;
 }
 
-pub trait Widget<T: 'static>: Send + Sync + Any {
-    type View: View<T>;
+pub trait Widget: Send + Sync + Any {
+    type View: View;
 
     fn update(&mut self, view: &Self::View, ctx: &dyn UiContext) -> WidgetInteractionResult;
 
@@ -42,7 +42,7 @@ pub trait Widget<T: 'static>: Send + Sync + Any {
         bounds: [f32; 2],
         event: &DeviceEvent,
         ctx: &dyn UiContext,
-    ) -> (Option<T>, WidgetInteractionResult);
+    ) -> WidgetInteractionResult;
 
     fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn UiContext) -> bool {
         let _ = ctx;
@@ -58,11 +58,11 @@ pub trait Widget<T: 'static>: Send + Sync + Any {
     fn render(&mut self, bounds: [f32; 2], ctx: &dyn UiContext) -> RenderNode;
 }
 
-/// Wrapper trait to erase generic type T from Widget trait.
-pub(super) trait AnyWidget<T>: Send + Sync + Any {
+/// Wrapper trait to erase the concrete Widget type.
+pub(super) trait AnyWidget: Send + Sync + Any {
     fn try_update(
         &mut self,
-        view: &dyn View<T>,
+        view: &dyn View,
         ctx: &dyn UiContext,
     ) -> Result<WidgetInteractionResult, WidgetUpdateError>;
 
@@ -71,28 +71,23 @@ pub(super) trait AnyWidget<T>: Send + Sync + Any {
         bounds: [f32; 2],
         event: &DeviceEvent,
         ctx: &dyn UiContext,
-    ) -> (Option<T>, WidgetInteractionResult);
+    ) -> WidgetInteractionResult;
 
     fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn UiContext) -> bool;
 
     fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn UiContext) -> [f32; 2];
 
-    fn render(
-        &mut self,
-        bounds: [f32; 2],
-        /* TODO: background: Background, */
-        ctx: &dyn UiContext,
-    ) -> RenderNode;
+    fn render(&mut self, bounds: [f32; 2], ctx: &dyn UiContext) -> RenderNode;
 }
 
-impl<W, V, T: 'static> AnyWidget<T> for W
+impl<W, V> AnyWidget for W
 where
-    W: Widget<T, View = V>,
-    V: View<T>,
+    W: Widget<View = V>,
+    V: View,
 {
     fn try_update(
         &mut self,
-        view: &dyn View<T>,
+        view: &dyn View,
         ctx: &dyn UiContext,
     ) -> Result<WidgetInteractionResult, WidgetUpdateError> {
         let Some(view) = (view as &dyn Any).downcast_ref::<V>() else {
@@ -107,7 +102,7 @@ where
         bounds: [f32; 2],
         event: &DeviceEvent,
         ctx: &dyn UiContext,
-    ) -> (Option<T>, WidgetInteractionResult) {
+    ) -> WidgetInteractionResult {
         Widget::device_input(self, bounds, event, ctx)
     }
 
@@ -124,21 +119,19 @@ where
     }
 }
 
-pub struct WidgetPod<T: 'static> {
+pub struct WidgetPod {
     label: Option<String>,
     id_hash: usize,
 
-    widget: Box<dyn AnyWidget<T>>,
+    widget: Box<dyn AnyWidget>,
 
     // cache
     // NOTE: Use cache existency as redraw flag.
     render_cache: Option<RenderNode>,
 }
 
-impl<T> WidgetPod<T> {
-    pub fn new(id: impl std::hash::Hash, widget: impl Widget<T>) -> Self {
-        let mut hasher = fxhash::FxHasher::default();
-        id.hash(&mut hasher);
+impl WidgetPod {
+    pub fn new(id: impl std::hash::Hash, widget: impl Widget + 'static) -> Self {
         let id_hash = fxhash::hash(&id);
 
         Self {
@@ -159,7 +152,7 @@ impl<T> WidgetPod<T> {
     }
 }
 
-impl<T> WidgetPod<T> {
+impl WidgetPod {
     pub fn label(&self) -> Option<&str> {
         self.label.as_deref()
     }
@@ -171,12 +164,10 @@ impl<T> WidgetPod<T> {
     pub fn invalidate_render_cache(&mut self) {
         self.render_cache = None;
     }
-}
 
-impl<T: 'static> WidgetPod<T> {
     pub fn try_update(
         &mut self,
-        view: &dyn View<T>,
+        view: &dyn View,
         ctx: &dyn UiContext,
     ) -> Result<WidgetInteractionResult, WidgetUpdateError> {
         self.widget.try_update(view, ctx)
@@ -187,8 +178,8 @@ impl<T: 'static> WidgetPod<T> {
         bounds: [f32; 2],
         event: &DeviceEvent,
         ctx: &dyn UiContext,
-    ) -> (Option<T>, WidgetInteractionResult) {
-        let (event, interaction_result) = self.widget.device_input(bounds, event, ctx);
+    ) -> WidgetInteractionResult {
+        let interaction_result = self.widget.device_input(bounds, event, ctx);
 
         match interaction_result {
             WidgetInteractionResult::LayoutNeeded => {
@@ -200,7 +191,7 @@ impl<T: 'static> WidgetPod<T> {
             WidgetInteractionResult::NoChange => {}
         }
 
-        (event, interaction_result)
+        interaction_result
     }
 
     pub fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn UiContext) -> bool {
