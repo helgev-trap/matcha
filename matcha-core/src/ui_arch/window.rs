@@ -5,8 +5,7 @@ use renderer::RenderNode;
 use crate::{
     event::device_event::DeviceEvent,
     ui_arch::{
-        metrics,
-        ui_context::UiContext,
+        UiContext, metrics,
         widget::{View, Widget, WidgetInteractionResult, WidgetPod, WidgetUpdateError},
     },
     window::{WindowConfig, WindowId},
@@ -29,7 +28,7 @@ pub struct Window {
 }
 
 impl View for Window {
-    fn build(&self, ctx: &dyn UiContext) -> WidgetPod {
+    fn build(&self, ctx: &UiContext) -> WidgetPod {
         let handle = ctx.create_window(&self.config).unwrap();
         let window_id = handle.id();
         let inner_widget = self.view.build(ctx);
@@ -62,7 +61,7 @@ pub struct WindowWidget {
 impl Widget for WindowWidget {
     type View = Window;
 
-    fn update(&mut self, view: &Window, ctx: &dyn UiContext) -> WidgetInteractionResult {
+    fn update(&mut self, view: &Window, ctx: &UiContext) -> WidgetInteractionResult {
         // The window already exists; just keep the inner widget in sync.
         // Registration was done in Window::build() and is not repeated here.
         let mut guard = self.instance.lock().unwrap();
@@ -79,18 +78,18 @@ impl Widget for WindowWidget {
         &mut self,
         _bounds: [f32; 2],
         _event: &DeviceEvent,
-        _ctx: &dyn UiContext,
+        _ctx: &UiContext,
     ) -> WidgetInteractionResult {
         // Input does not cross window boundaries; handled by UiArch per-window.
         WidgetInteractionResult::NoChange
     }
 
-    fn measure(&self, _constraints: &metrics::Constraints, _ctx: &dyn UiContext) -> [f32; 2] {
+    fn measure(&self, _constraints: &metrics::Constraints, _ctx: &UiContext) -> [f32; 2] {
         // Zero-size: the window occupies no space in the parent layout.
         [0.0, 0.0]
     }
 
-    fn render(&mut self, _bounds: [f32; 2], _ctx: &dyn UiContext) -> RenderNode {
+    fn render(&mut self, _bounds: [f32; 2], _ctx: &UiContext) -> RenderNode {
         // Nothing to render in the parent tree; the window draws to its own surface.
         RenderNode::new()
     }
@@ -136,14 +135,9 @@ impl WindowWidgetInstance {
 pub trait AnyWindowWidgetInstance: Send + Sync {
     fn window_id(&self) -> WindowId;
     fn size(&self) -> [f32; 2];
-    fn device_input(
-        &mut self,
-        bounds: [f32; 2],
-        event: &DeviceEvent,
-        ctx: &dyn UiContext,
-    ) -> WidgetInteractionResult;
-    fn render(&mut self, bounds: [f32; 2], ctx: &dyn UiContext) -> RenderNode;
-    fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn UiContext) -> [f32; 2];
+    fn device_input(&mut self, event: &DeviceEvent, ctx: &UiContext) -> WidgetInteractionResult;
+    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode;
+    fn measure(&self, constraints: &metrics::Constraints, ctx: &UiContext) -> [f32; 2];
 }
 
 impl AnyWindowWidgetInstance for WindowWidgetInstance {
@@ -155,20 +149,16 @@ impl AnyWindowWidgetInstance for WindowWidgetInstance {
         self.handle.size()
     }
 
-    fn device_input(
-        &mut self,
-        bounds: [f32; 2],
-        event: &DeviceEvent,
-        ctx: &dyn UiContext,
-    ) -> WidgetInteractionResult {
+    fn device_input(&mut self, event: &DeviceEvent, ctx: &UiContext) -> WidgetInteractionResult {
+        let bounds = self.size();
         self.widget.device_input(bounds, event, ctx)
     }
 
-    fn render(&mut self, bounds: [f32; 2], ctx: &dyn UiContext) -> RenderNode {
+    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode {
         self.widget.render(bounds, ctx)
     }
 
-    fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn UiContext) -> [f32; 2] {
+    fn measure(&self, constraints: &metrics::Constraints, ctx: &UiContext) -> [f32; 2] {
         self.widget.measure(constraints, ctx)
     }
 }

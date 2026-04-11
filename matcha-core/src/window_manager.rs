@@ -9,7 +9,7 @@ use crate::window::{
 
 pub struct WindowManager {
     windows: DashMap<WindowId, Arc<Mutex<Window>>, FxBuildHasher>,
-    handles: DashMap<WindowId, Weak<WindowHandle>, FxBuildHasher>,
+    // handles: DashMap<WindowId, Weak<WindowHandle>, FxBuildHasher>,
     disabled_windows: DashSet<WindowId, FxBuildHasher>,
     weak_self: Weak<Self>,
 }
@@ -18,7 +18,7 @@ impl WindowManager {
     pub fn new() -> Arc<Self> {
         Arc::new_cyclic(|weak_self| Self {
             windows: DashMap::with_hasher(FxBuildHasher::default()),
-            handles: DashMap::with_hasher(FxBuildHasher::default()),
+            // handles: DashMap::with_hasher(FxBuildHasher::default()),
             disabled_windows: DashSet::with_hasher(FxBuildHasher::default()),
             weak_self: weak_self.clone(),
         })
@@ -28,11 +28,11 @@ impl WindowManager {
 impl WindowManager {
     pub fn create_window(
         &self,
-        ctrl: &impl WindowControler,
+        ctrl: &dyn WindowControler,
         config: &WindowConfig,
         instance: &wgpu::Instance,
         device: &wgpu::Device,
-    ) -> Result<Arc<WindowHandle>, WindowError> {
+    ) -> Result<WindowHandle, WindowError> {
         let window_surface = ctrl.create_native_window(config, instance, device)?;
         let id = window_surface.window_id();
 
@@ -41,23 +41,22 @@ impl WindowManager {
         self.windows.insert(id, Arc::new(Mutex::new(window)));
         self.disabled_windows.remove(&id);
 
-        let handle = Arc::new(WindowHandle {
+        let handle = WindowHandle {
             id,
             weak_to_manager: self.weak_self.clone(),
-        });
-        self.handles.insert(id, Arc::downgrade(&handle));
+        };
 
         Ok(handle)
     }
 
-    pub fn get_window_handle(&self, id: WindowId) -> Option<Arc<WindowHandle>> {
-        self.handles.get(&id).and_then(|h| h.upgrade())
-    }
+    // pub fn get_window_handle(&self, id: WindowId) -> Option<Arc<WindowHandle>> {
+    //     self.handles.get(&id).and_then(|h| h.upgrade())
+    // }
 
     pub(crate) fn remove_window(&self, id: WindowId) {
         self.windows.remove(&id);
         self.disabled_windows.remove(&id);
-        self.handles.remove(&id);
+        // self.handles.remove(&id);
     }
 
     pub async fn disable_window(&self, id: WindowId) {

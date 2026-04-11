@@ -5,7 +5,7 @@ use renderer::RenderNode;
 use super::widget::{View, Widget, WidgetInteractionResult, WidgetPod};
 use crate::{
     event::device_event::DeviceEvent,
-    ui_arch::{metrics, ui_context::UiContext, widget::WidgetUpdateError},
+    ui_arch::{AppContext, UiContext, metrics, widget::WidgetUpdateError},
 };
 
 // ----------------------------------------------------------------------------
@@ -42,20 +42,37 @@ pub trait Component: Send + Sync + 'static {
     /// Discrete commands delivered from the application layer.
     type Message: Send + Sync + 'static;
 
+    // -----------------
+    // Lifecycle methods
+    // -----------------
+
     /// Called once when the component is first attached to the widget tree.
-    fn setup(&self, ctx: &dyn UiContext);
+    fn init(&self, ctx: &AppContext);
+
+    /// Called when the application is resumed.
+    fn resumed(&self, ctx: &AppContext);
+
+    /// Called when the application is suspended.
+    fn suspended(&self, ctx: &AppContext);
+
+    /// Called when the application is exiting.
+    fn exiting(&self, ctx: &AppContext);
+
+    // -----------------
+    // Update methods
+    // -----------------
 
     /// Called when a discrete [`Message`](Component::Message) is received.
     ///
     /// Typically used to trigger background tasks or write to [`SharedValue`](shared_buffer::SharedValue)
     /// fields. A redraw occurs only if `store()` is called.
-    fn update(&self, message: Self::Message, ctx: &dyn UiContext);
+    fn update(&self, message: Self::Message, ctx: &UiContext);
 
     /// Builds the view tree from the current state.
-    fn view(&self, ctx: &dyn UiContext) -> Box<dyn View>;
+    fn view(&self, ctx: &UiContext) -> Box<dyn View>;
 
     /// Handles a raw device event (keyboard, mouse, etc.). Default implementation is a no-op.
-    fn input(&self, device_event: &DeviceEvent, ctx: &dyn UiContext) {
+    fn input(&self, device_event: &DeviceEvent, ctx: &UiContext) {
         let _ = (device_event, ctx);
     }
 }
@@ -91,18 +108,31 @@ impl<C: Component> ComponentPod<C> {
 }
 
 impl<C: Component> ComponentPod<C> {
-    /// Calls [`Component::setup`]. Invoke once after construction.
-    pub fn setup(&self, ctx: &dyn UiContext) {
-        self.component.setup(ctx);
+    pub fn init(&self, ctx: &AppContext) {
+        self.component.init(ctx);
     }
 
+    pub fn resumed(&self, ctx: &AppContext) {
+        self.component.resumed(ctx);
+    }
+
+    pub fn suspended(&self, ctx: &AppContext) {
+        self.component.suspended(ctx);
+    }
+
+    pub fn exiting(&self, ctx: &AppContext) {
+        self.component.exiting(ctx);
+    }
+}
+
+impl<C: Component> ComponentPod<C> {
     /// Delivers a discrete [`Message`](Component::Message) to the component.
-    pub fn update(&self, message: C::Message, ctx: &dyn UiContext) {
+    pub fn update(&self, message: C::Message, ctx: &UiContext) {
         self.component.update(message, ctx);
     }
 
     /// Builds a [`ComponentView`] from the current state.
-    pub fn view(&self, ctx: &dyn UiContext) -> ComponentView<C> {
+    pub fn view(&self, ctx: &UiContext) -> ComponentView<C> {
         ComponentView {
             label: self.label.clone(),
             component: self.component.clone(),
@@ -122,7 +152,7 @@ pub struct ComponentView<C: Component> {
 }
 
 impl<C: Component> View for ComponentView<C> {
-    fn build(&self, ctx: &dyn UiContext) -> WidgetPod {
+    fn build(&self, ctx: &UiContext) -> WidgetPod {
         WidgetPod::new(
             self.label.as_deref(),
             ComponentWidget {
@@ -145,7 +175,7 @@ struct ComponentWidget<C: Component> {
 impl<C: Component> Widget for ComponentWidget<C> {
     type View = ComponentView<C>;
 
-    fn update(&mut self, view: &Self::View, ctx: &dyn UiContext) -> WidgetInteractionResult {
+    fn update(&mut self, view: &Self::View, ctx: &UiContext) -> WidgetInteractionResult {
         match self.inner_widget.try_update(view.inner_view.as_ref(), ctx) {
             Ok(interaction_result) => interaction_result,
             Err(WidgetUpdateError::TypeMismatch) => {
@@ -159,21 +189,21 @@ impl<C: Component> Widget for ComponentWidget<C> {
         &mut self,
         bounds: [f32; 2],
         event: &DeviceEvent,
-        ctx: &dyn UiContext,
+        ctx: &UiContext,
     ) -> WidgetInteractionResult {
         self.component.input(event, ctx);
         self.inner_widget.device_input(bounds, event, ctx)
     }
 
-    fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &dyn UiContext) -> bool {
+    fn is_inside(&self, bounds: [f32; 2], position: [f32; 2], ctx: &UiContext) -> bool {
         self.inner_widget.is_inside(bounds, position, ctx)
     }
 
-    fn measure(&self, constraints: &metrics::Constraints, ctx: &dyn UiContext) -> [f32; 2] {
+    fn measure(&self, constraints: &metrics::Constraints, ctx: &UiContext) -> [f32; 2] {
         self.inner_widget.measure(constraints, ctx)
     }
 
-    fn render(&mut self, bounds: [f32; 2], ctx: &dyn UiContext) -> RenderNode {
+    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode {
         self.inner_widget.render(bounds, ctx)
     }
 }

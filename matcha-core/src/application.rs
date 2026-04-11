@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::event::device_event::{DeviceEvent, DeviceEventState};
+use crate::event::device_event::DeviceEvent;
 use crate::event::raw_device_event::{RawDeviceEvent, RawDeviceId};
-use crate::event::window_event::{WindowEvent, WindowEventState};
+use crate::event::window_event::WindowEvent;
 use crate::event_sender::{EventReceiver, EventSender};
 use crate::ui_arch::component::Component;
 use crate::window::WindowId;
@@ -35,7 +35,7 @@ impl<C: Component> Application<C> {
     ///
     /// Events emitted by widgets via `ctx.emit_event()` or `ctx.event_sender().emit()`
     /// are received from `EventReceiver`.
-    pub fn new(model: C) -> (Self, EventReceiver) {
+    pub fn new(ui: C) -> (Self, EventReceiver) {
         todo!()
     }
 
@@ -48,15 +48,20 @@ impl<C: Component> Application<C> {
 /// Lifecycle events
 impl<C: Component> Application<C> {
     pub(crate) fn init(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.init(app_ctrl);
+        self.ui.init(&self.tokio_runtime.handle(), app_ctrl);
     }
 
     pub(crate) fn resumed(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.resumed(app_ctrl);
+        self.ui.resumed(&self.tokio_runtime.handle(), app_ctrl);
     }
 
     pub(crate) fn create_window(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.update(&self.window_manager, app_ctrl, &self.gpu);
+        self.ui.update(
+            &self.tokio_runtime.handle(),
+            app_ctrl,
+            &self.window_manager,
+            &self.gpu,
+        );
     }
 
     pub(crate) fn destroy_window(&self, _app_ctrl: &impl ApplicationControler) {
@@ -64,11 +69,11 @@ impl<C: Component> Application<C> {
     }
 
     pub(crate) fn suspended(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.suspended(app_ctrl);
+        self.ui.suspended(&self.tokio_runtime.handle(), app_ctrl);
     }
 
     pub(crate) fn exiting(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.exiting(app_ctrl);
+        self.ui.exiting(&self.tokio_runtime.handle(), app_ctrl);
     }
 }
 
@@ -81,14 +86,15 @@ impl<C: Component> Application<C> {
         event: WindowEvent,
     ) {
         // TODO: reconsider this async / sync boundary
-        self.tokio_runtime
-            .block_on(self.window_manager.with_window(window_id, |window| {
-                let event = window.window_event_state.process_event(&event);
+        let processed =
+            self.tokio_runtime
+                .block_on(self.window_manager.with_window(window_id, |window| {
+                    window.window_event_state.process_event(&event)
+                }));
 
-                if let Some(event) = event {
-                    self.ui.window_event(app_ctrl, window_id, event);
-                }
-            }));
+        if let Some(Some(event)) = processed {
+            self.ui.window_event(app_ctrl, window_id, event);
+        }
     }
 }
 
@@ -101,14 +107,22 @@ impl<C: Component> Application<C> {
         event: DeviceEvent,
     ) {
         // TODO: reconsider this async / sync boundary
-        self.tokio_runtime
-            .block_on(self.window_manager.with_window(window_id, |window| {
-                let event = window.device_event_state.process_event(&event);
+        let processed =
+            self.tokio_runtime
+                .block_on(self.window_manager.with_window(window_id, |window| {
+                    window.device_event_state.process_event(&event)
+                }));
 
-                if let Some(event) = event {
-                    self.ui.device_event(app_ctrl, window_id, event);
-                }
-            }));
+        if let Some(Some(event)) = processed {
+            self.ui.device_event(
+                window_id,
+                event,
+                &self.tokio_runtime.handle(),
+                app_ctrl,
+                &self.window_manager,
+                &self.gpu,
+            );
+        }
     }
 }
 
@@ -135,7 +149,12 @@ impl<C: Component> Application<C> {
 impl<C: Component> Application<C> {
     /// Called when a `BufferUpdated` event is received from the bridge thread.
     pub(crate) fn buffer_updated(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.update(&self.window_manager, app_ctrl, &self.gpu);
+        self.ui.update(
+            &self.tokio_runtime.handle(),
+            app_ctrl,
+            &self.window_manager,
+            &self.gpu,
+        );
     }
 
     pub(crate) fn backend_message(
@@ -143,7 +162,13 @@ impl<C: Component> Application<C> {
         app_ctrl: &impl ApplicationControler,
         msg: C::Message,
     ) {
-        self.ui.user_event(app_ctrl, msg);
+        self.ui.user_event(
+            msg,
+            &self.tokio_runtime.handle(),
+            app_ctrl,
+            &self.window_manager,
+            &self.gpu,
+        );
     }
 }
 
@@ -156,9 +181,7 @@ impl<C: Component> Application<C> {
 /// Call once after the winit `EventLoopProxy` has been obtained.
 #[cfg(feature = "winit")]
 pub(crate) fn spawn_bridge_thread<C: Component>(
-    proxy: winit::event_loop::EventLoopProxy<
-        crate::winit_interface::WinitUserMessage<C>,
-    >,
+    proxy: winit::event_loop::EventLoopProxy<crate::winit_interface::WinitUserMessage<C>>,
 ) -> std::thread::JoinHandle<()> {
     shared_buffer::BufferContext::init_global();
     let ctx = shared_buffer::BufferContext::global().clone();
@@ -187,7 +210,12 @@ impl<C: Component> Application<C> {
         _start: std::time::Instant,
         _requested_resume: std::time::Instant,
     ) {
-        self.ui.update(&self.window_manager, app_ctrl, &self.gpu);
+        self.ui.update(
+            &self.tokio_runtime.handle(),
+            app_ctrl,
+            &self.window_manager,
+            &self.gpu,
+        );
     }
 
     pub(crate) fn wait_cancelled(
