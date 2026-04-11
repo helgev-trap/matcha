@@ -3,6 +3,7 @@ use fxhash::FxBuildHasher;
 use std::sync::{Arc, Weak};
 use tokio::sync::Mutex;
 
+use crate::event::EventStateConfig;
 use crate::window::{
     Window, WindowConfig, WindowControler, WindowError, WindowId, WindowRenderable,
 };
@@ -12,15 +13,28 @@ pub struct WindowManager {
     // handles: DashMap<WindowId, Weak<WindowHandle>, FxBuildHasher>,
     disabled_windows: DashSet<WindowId, FxBuildHasher>,
     weak_self: Weak<Self>,
+
+    /// Configuration applied to every new `Window`'s event state machines.
+    event_config: EventStateConfig,
 }
 
 impl WindowManager {
+    /// Creates a `WindowManager` with default event state configuration.
     pub fn new() -> Arc<Self> {
+        Self::with_event_config(EventStateConfig::default())
+    }
+
+    /// Creates a `WindowManager` with a custom event state configuration.
+    ///
+    /// The supplied `config` is stored and used whenever a new [`Window`] is created,
+    /// so that `UiArch` never needs to know about the individual sub-configs.
+    pub fn with_event_config(event_config: EventStateConfig) -> Arc<Self> {
         Arc::new_cyclic(|weak_self| Self {
             windows: DashMap::with_hasher(FxBuildHasher::default()),
             // handles: DashMap::with_hasher(FxBuildHasher::default()),
             disabled_windows: DashSet::with_hasher(FxBuildHasher::default()),
             weak_self: weak_self.clone(),
+            event_config,
         })
     }
 }
@@ -36,7 +50,7 @@ impl WindowManager {
         let window_surface = ctrl.create_native_window(config, instance, device)?;
         let id = window_surface.window_id();
 
-        let window = Window::new(config.clone(), window_surface);
+        let window = Window::new(config.clone(), window_surface, &self.event_config);
 
         self.windows.insert(id, Arc::new(Mutex::new(window)));
         self.disabled_windows.remove(&id);

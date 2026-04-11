@@ -1,5 +1,6 @@
-use crate::event::{device_event::DeviceEventState, window_event::WindowEventState};
+use crate::event::{device_event::DeviceEventState, window_event::WindowEventState, EventStateConfig};
 use std::sync::Arc;
+
 
 pub mod window_config;
 pub use window_config::*;
@@ -38,14 +39,19 @@ pub struct Window {
 }
 
 impl Window {
-    pub(crate) fn new(config: WindowConfig, window_surface: Arc<WindowSurface>) -> Self {
+    pub(crate) fn new(
+        config: WindowConfig,
+        window_surface: Arc<WindowSurface>,
+        event_config: &EventStateConfig,
+    ) -> Self {
         Self {
             config,
             window_surface: Some(window_surface),
             renderable: None,
             render_task_handle: None,
-            device_event_state: DeviceEventState::new(),
-            window_event_state: WindowEventState::new(),
+            device_event_state: DeviceEventState::new(event_config.mouse)
+                .expect("EventStateConfig passed to Window::new must be valid"),
+            window_event_state: WindowEventState::default(),
         }
     }
 
