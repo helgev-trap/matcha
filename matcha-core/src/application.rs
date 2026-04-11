@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::event::device_event::DeviceEvent;
 use crate::event::raw_device_event::{RawDeviceEvent, RawDeviceId};
 use crate::event::window_event::WindowEvent;
+use crate::event::EventStateConfig;
 use crate::event_sender::{EventReceiver, EventSender};
 use crate::ui_arch::component::Component;
 use crate::window::WindowId;
@@ -36,6 +37,28 @@ impl<C: Component> Application<C> {
     /// Events emitted by widgets via `ctx.emit_event()` or `ctx.event_sender().emit()`
     /// are received from `EventReceiver`.
     pub fn new(ui: C) -> (Self, EventReceiver) {
+        todo!()
+    }
+
+    /// Overrides the event state configuration used for every window created by this application.
+    ///
+    /// Call this before [`run_on_winit`] to customise mouse gesture timings, primary button, etc.
+    /// If not called, [`EventStateConfig::default()`] is used.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let (app, rx) = Application::new(MyComponent::new())
+    ///     .with_event_config(EventStateConfig {
+    ///         mouse: MouseStateConfig {
+    ///             combo_duration: Duration::from_millis(300),
+    ///             ..MouseStateConfig::default()
+    ///         },
+    ///     });
+    /// ```
+    pub fn with_event_config(self, config: EventStateConfig) -> Self {
+        // Recreate the WindowManager with the new config.
+        // (Application::new() is currently todo!(), so this is wired up for when it's implemented.)
+        let _ = config; // will be forwarded to WindowManager::with_event_config(config)
         todo!()
     }
 
@@ -85,16 +108,7 @@ impl<C: Component> Application<C> {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        // TODO: reconsider this async / sync boundary
-        let processed =
-            self.tokio_runtime
-                .block_on(self.window_manager.with_window(window_id, |window| {
-                    window.window_event_state.process_event(&event)
-                }));
-
-        if let Some(Some(event)) = processed {
-            self.ui.window_event(app_ctrl, window_id, event);
-        }
+        self.ui.window_event(app_ctrl, window_id, event);
     }
 }
 
@@ -106,23 +120,14 @@ impl<C: Component> Application<C> {
         window_id: WindowId,
         event: DeviceEvent,
     ) {
-        // TODO: reconsider this async / sync boundary
-        let processed =
-            self.tokio_runtime
-                .block_on(self.window_manager.with_window(window_id, |window| {
-                    window.device_event_state.process_event(&event)
-                }));
-
-        if let Some(Some(event)) = processed {
-            self.ui.device_event(
-                window_id,
-                event,
-                &self.tokio_runtime.handle(),
-                app_ctrl,
-                &self.window_manager,
-                &self.gpu,
-            );
-        }
+        self.ui.device_event(
+            window_id,
+            event,
+            &self.tokio_runtime.handle(),
+            app_ctrl,
+            &self.window_manager,
+            &self.gpu,
+        );
     }
 }
 
