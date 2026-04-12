@@ -197,19 +197,16 @@ impl WindowSurface {
         self.window.resize_increments()
     }
 
-    pub fn set_resize_increments(&self, increments: Option<winit::dpi::PhysicalSize<u32>>) {
-        self.window
-            .set_resize_increments(increments.map(winit::dpi::Size::Physical));
+    pub fn set_resize_increments(&self, increments: Option<winit::dpi::Size>) {
+        self.window.set_resize_increments(increments);
     }
 
-    pub fn set_min_inner_size(&self, min_size: Option<winit::dpi::PhysicalSize<u32>>) {
-        self.window
-            .set_min_inner_size(min_size.map(winit::dpi::Size::Physical));
+    pub fn set_min_inner_size(&self, min_size: Option<winit::dpi::Size>) {
+        self.window.set_min_inner_size(min_size);
     }
 
-    pub fn set_max_inner_size(&self, max_size: Option<winit::dpi::PhysicalSize<u32>>) {
-        self.window
-            .set_max_inner_size(max_size.map(winit::dpi::Size::Physical));
+    pub fn set_max_inner_size(&self, max_size: Option<winit::dpi::Size>) {
+        self.window.set_max_inner_size(max_size);
     }
 }
 

@@ -310,3 +310,40 @@ impl From<Fullscreen> for winit::window::Fullscreen {
         }
     }
 }
+
+#[cfg(feature = "winit")]
+impl From<winit::window::Fullscreen> for Fullscreen {
+    fn from(f: winit::window::Fullscreen) -> Self {
+        match f {
+            winit::window::Fullscreen::Borderless(_) => Fullscreen::Borderless,
+            winit::window::Fullscreen::Exclusive(_) => Fullscreen::Exclusive,
+        }
+    }
+}
+
+#[cfg(feature = "winit")]
+impl From<winit::window::Theme> for Theme {
+    fn from(t: winit::window::Theme) -> Self {
+        match t {
+            winit::window::Theme::Light => Theme::Light,
+            winit::window::Theme::Dark => Theme::Dark,
+        }
+    }
+}
+
+#[cfg(feature = "winit")]
+impl From<winit::window::WindowButtons> for WindowButtons {
+    fn from(b: winit::window::WindowButtons) -> Self {
+        let mut result = WindowButtons::empty();
+        if b.contains(winit::window::WindowButtons::CLOSE) {
+            result |= WindowButtons::CLOSE;
+        }
+        if b.contains(winit::window::WindowButtons::MINIMIZE) {
+            result |= WindowButtons::MINIMIZE;
+        }
+        if b.contains(winit::window::WindowButtons::MAXIMIZE) {
+            result |= WindowButtons::MAXIMIZE;
+        }
+        result
+    }
+}
