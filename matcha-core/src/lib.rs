@@ -2,6 +2,7 @@
 compile_error!("feature \"winit\" and feature \"baseview\" cannot be enabled at the same time");
 
 pub mod application;
+pub mod color;
 pub mod event;
 pub mod event_sender;
 pub mod renderer;
