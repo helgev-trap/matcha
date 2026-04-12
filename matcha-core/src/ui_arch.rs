@@ -10,6 +10,7 @@ use crate::window_manager::{WindowHandle, WindowManager};
 
 pub mod component;
 pub mod metrics;
+pub mod sub_widgets;
 pub mod widget;
 pub mod window;
 
