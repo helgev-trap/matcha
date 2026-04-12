@@ -1,9 +1,9 @@
 use std::hash::Hash;
 use std::vec::Vec;
 
-use crate::ui_arch::{
+use crate::tree_app::{
+    context::UiContext,
     widget::{View, WidgetInteractionResult, WidgetPod},
-    UiContext,
 };
 
 pub struct SubWidgetsVec<T = ()> {
@@ -41,8 +41,7 @@ impl<T> SubWidgetsVec<T> {
 impl<T: PartialEq> SubWidgetsVec<T> {
     /// Apply the ID-based diff update algorithm.
     ///
-    /// For each entry in `new_children` — a tuple of `(id_hash, view, setting)` —
-    /// the algorithm tries to match an existing [`WidgetPod`] by `id_hash`.
+    /// For each entry in `new_children` 窶・a tuple of `(id_hash, view, setting)` 窶・    /// the algorithm tries to match an existing [`WidgetPod`] by `id_hash`.
     /// If a match is found and the view type is compatible the pod is updated in
     /// place; otherwise a new pod is built from the view.
     ///
@@ -80,7 +79,7 @@ impl<T: PartialEq> SubWidgetsVec<T> {
             // Try to update the existing pod in place.
             if let Some((pod, _)) = &mut old_entry {
                 if pod.try_update(view, ctx).is_err() {
-                    // Type mismatch — discard the old pod and build fresh.
+                    // Type mismatch 窶・discard the old pod and build fresh.
                     old_entry = None;
                 }
             }

@@ -1,252 +1,71 @@
-use std::sync::Arc;
+use crate::{
+    adapter::EventLoop,
+    event::{
+        device_event::DeviceEvent,
+        raw_device_event::{RawDeviceEvent, RawDeviceId},
+        window_event::WindowEvent,
+    },
+    window::WindowId,
+};
 
-use crate::event::device_event::DeviceEvent;
-use crate::event::raw_device_event::{RawDeviceEvent, RawDeviceId};
-use crate::event::window_event::WindowEvent;
-use crate::event::EventStateConfig;
-use crate::event_sender::{EventReceiver, EventSender};
-use crate::ui_arch::component::Component;
-use crate::window::WindowId;
-use crate::window_manager::WindowManager;
+#[async_trait::async_trait]
+pub trait Application: Send + Sync + 'static {
+    type Msg: Send + 'static;
 
-pub struct Application<C: Component> {
-    // runtime
-    tokio_runtime: tokio::runtime::Runtime,
+    // lifecycle methods
+    fn init(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
+    fn resumed(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
+    fn create_window(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
+    fn destroy_window(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
+    fn suspended(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
+    fn exiting(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
 
-    // gpu resources
-    gpu: gpu_utils::gpu::Gpu,
+    // rendering methods — no event_loop, spawnable in parallel
+    async fn render(&self, window_id: WindowId);
 
-    // ui resources
-    ui: crate::ui_arch::UiArch<C>,
-
-    window_manager: Arc<WindowManager>,
-
-    /// Sender handle shared with every `UiContext` instance.
-    /// The matching `EventReceiver` is returned from `Application::new()`.
-    event_sender: EventSender,
-
-    /// Way to send events to the event loop from outside.
-    /// This is ensured to be Some after calling `Application::run()`
-    event_loop_proxy: Option<Box<dyn ApplicationLoopProxy<C::Message>>>,
-}
-
-/// Construction and running
-impl<C: Component> Application<C> {
-    /// Creates a new `Application` and returns the paired `EventReceiver`.
-    ///
-    /// Events emitted by widgets via `ctx.emit_event()` or `ctx.event_sender().emit()`
-    /// are received from `EventReceiver`.
-    pub fn new(ui: C) -> (Self, EventReceiver) {
-        todo!()
+    // event methods
+    fn window_event(&self, event_loop: &impl EventLoop, window_id: WindowId, event: WindowEvent);
+    fn window_destroyed(&self, event_loop: &impl EventLoop, window_id: WindowId) {
+        let _ = event_loop;
+        let _ = window_id;
     }
-
-    /// Overrides the event state configuration used for every window created by this application.
-    ///
-    /// Call this before [`run_on_winit`] to customise mouse gesture timings, primary button, etc.
-    /// If not called, [`EventStateConfig::default()`] is used.
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// let (app, rx) = Application::new(MyComponent::new())
-    ///     .with_event_config(EventStateConfig {
-    ///         mouse: MouseStateConfig {
-    ///             combo_duration: Duration::from_millis(300),
-    ///             ..MouseStateConfig::default()
-    ///         },
-    ///     });
-    /// ```
-    pub fn with_event_config(self, config: EventStateConfig) -> Self {
-        // Recreate the WindowManager with the new config.
-        // (Application::new() is currently todo!(), so this is wired up for when it's implemented.)
-        let _ = config; // will be forwarded to WindowManager::with_event_config(config)
-        todo!()
-    }
-
-    #[cfg(feature = "winit")]
-    pub fn run_on_winit(self) -> Result<Self, winit::error::EventLoopError> {
-        todo!()
-    }
-}
-
-/// Lifecycle events
-impl<C: Component> Application<C> {
-    pub(crate) fn init(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.init(&self.tokio_runtime.handle(), app_ctrl);
-    }
-
-    pub(crate) fn resumed(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.resumed(&self.tokio_runtime.handle(), app_ctrl);
-    }
-
-    pub(crate) fn create_window(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.update(
-            &self.tokio_runtime.handle(),
-            app_ctrl,
-            &self.window_manager,
-            &self.gpu,
-        );
-    }
-
-    pub(crate) fn destroy_window(&self, _app_ctrl: &impl ApplicationControler) {
-        let _ = self.window_manager.disable_all_windows();
-    }
-
-    pub(crate) fn suspended(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.suspended(&self.tokio_runtime.handle(), app_ctrl);
-    }
-
-    pub(crate) fn exiting(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.exiting(&self.tokio_runtime.handle(), app_ctrl);
-    }
-}
-
-/// Window events
-impl<C: Component> Application<C> {
-    pub(crate) fn window_event(
-        &mut self,
-        app_ctrl: &impl ApplicationControler,
-        window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        self.ui.window_event(app_ctrl, window_id, event);
-    }
-}
-
-/// Device event
-impl<C: Component> Application<C> {
-    pub(crate) fn device_event(
-        &mut self,
-        app_ctrl: &impl ApplicationControler,
-        window_id: WindowId,
-        event: DeviceEvent,
-    ) {
-        self.ui.device_event(
-            window_id,
-            event,
-            &self.tokio_runtime.handle(),
-            app_ctrl,
-            &self.window_manager,
-            &self.gpu,
-        );
-    }
-}
-
-/// Raw device event
-impl<C: Component> Application<C> {
-    pub(crate) fn raw_device_event(
-        &mut self,
-        app_ctrl: &impl ApplicationControler,
+    fn device_event(&self, event_loop: &impl EventLoop, window_id: WindowId, event: DeviceEvent);
+    fn raw_device_event(
+        &self,
+        event_loop: &impl EventLoop,
         raw_device_id: RawDeviceId,
         raw_event: RawDeviceEvent,
+    );
+    fn buffer_updated(&self, event_loop: &impl EventLoop);
+    fn backend_message(&self, event_loop: &impl EventLoop, msg: Self::Msg);
+
+    fn poll(&self, event_loop: &impl EventLoop) {
+        let _ = event_loop;
+    }
+    fn resume_time_reached(
+        &self,
+        event_loop: &impl EventLoop,
+        start: std::time::Instant,
+        requested_resume: std::time::Instant,
     ) {
-        self.ui.raw_device_event(app_ctrl, raw_device_id, raw_event);
+        let _ = event_loop;
+        let _ = start;
+        let _ = requested_resume;
     }
-}
-
-/// Event Loop Commands
-impl<C: Component> Application<C> {
-    pub(crate) fn event_loop_commands(&self, _cmd: ApplicationCommand) {
-        todo!()
-    }
-}
-
-/// User event
-impl<C: Component> Application<C> {
-    /// Called when a `BufferUpdated` event is received from the bridge thread.
-    pub(crate) fn buffer_updated(&mut self, app_ctrl: &impl ApplicationControler) {
-        self.ui.update(
-            &self.tokio_runtime.handle(),
-            app_ctrl,
-            &self.window_manager,
-            &self.gpu,
-        );
-    }
-
-    pub(crate) fn backend_message(
-        &mut self,
-        app_ctrl: &impl ApplicationControler,
-        msg: C::Message,
+    fn wait_cancelled(
+        &self,
+        event_loop: &impl EventLoop,
+        start: std::time::Instant,
+        requested_resume: Option<std::time::Instant>,
     ) {
-        self.ui.user_event(
-            msg,
-            &self.tokio_runtime.handle(),
-            app_ctrl,
-            &self.window_manager,
-            &self.gpu,
-        );
+        let _ = event_loop;
+        let _ = start;
+        let _ = requested_resume;
+    }
+    fn about_to_wait(&self, event_loop: &impl EventLoop) {
+        let _ = event_loop;
+    }
+    fn memory_warning(&self, event_loop: &impl EventLoop) {
+        let _ = event_loop;
     }
 }
-
-/// Spawns the buffer bridge thread.
-///
-/// The bridge thread blocks on [`BufferContext::wait_for_signal()`] and forwards
-/// each signal to the winit event loop via `EventLoopProxy::send_event()`,
-/// waking it from `ControlFlow::Wait`.
-///
-/// Call once after the winit `EventLoopProxy` has been obtained.
-#[cfg(feature = "winit")]
-pub(crate) fn spawn_bridge_thread<C: Component>(
-    proxy: winit::event_loop::EventLoopProxy<crate::winit_interface::WinitUserMessage<C>>,
-) -> std::thread::JoinHandle<()> {
-    shared_buffer::BufferContext::init_global();
-    let ctx = shared_buffer::BufferContext::global().clone();
-
-    std::thread::Builder::new()
-        .name("matcha-buffer-bridge".into())
-        .spawn(move || {
-            while ctx.wait_for_signal() {
-                proxy
-                    .send_event(crate::winit_interface::WinitUserMessage::BufferUpdated)
-                    .ok();
-            }
-        })
-        .expect("failed to spawn buffer bridge thread")
-}
-
-/// Polling event
-impl<C: Component> Application<C> {
-    pub(crate) fn poll(&mut self, _app_ctrl: &impl ApplicationControler) {
-        todo!()
-    }
-
-    pub(crate) fn resume_time_reached(
-        &mut self,
-        app_ctrl: &impl ApplicationControler,
-        _start: std::time::Instant,
-        _requested_resume: std::time::Instant,
-    ) {
-        self.ui.update(
-            &self.tokio_runtime.handle(),
-            app_ctrl,
-            &self.window_manager,
-            &self.gpu,
-        );
-    }
-
-    pub(crate) fn wait_cancelled(
-        &mut self,
-        _app_ctrl: &impl ApplicationControler,
-        _start: std::time::Instant,
-        _requested_resume: Option<std::time::Instant>,
-    ) {
-    }
-}
-
-/// Currently not supported
-impl<C: Component> Application<C> {
-    pub(crate) fn about_to_wait(&mut self, _app_ctrl: &impl ApplicationControler) {}
-
-    pub(crate) fn memory_warning(&mut self, _app_ctrl: &impl ApplicationControler) {}
-}
-
-// -------------------
-// API type definition
-// -------------------
-
-pub(crate) trait ApplicationControler: crate::window::WindowControler {}
-
-pub(crate) enum ApplicationCommand {
-    Exit,
-}
-
-pub(crate) trait ApplicationLoopProxy<BackendMessage: Send + 'static> {}

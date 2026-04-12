@@ -5,7 +5,11 @@ use renderer::RenderNode;
 use super::widget::{View, Widget, WidgetInteractionResult, WidgetPod};
 use crate::{
     event::device_event::DeviceEvent,
-    ui_arch::{AppContext, UiContext, metrics, widget::WidgetUpdateError},
+    tree_app::{
+        context::{AppContext, RenderCtx, UiContext},
+        metrics,
+        widget::WidgetUpdateError,
+    },
 };
 
 // ----------------------------------------------------------------------------
@@ -203,7 +207,7 @@ impl<C: Component> Widget for ComponentWidget<C> {
         self.inner_widget.measure(constraints, ctx)
     }
 
-    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode {
+    fn render(&mut self, bounds: [f32; 2], ctx: &RenderCtx) -> RenderNode {
         self.inner_widget.render(bounds, ctx)
     }
 }

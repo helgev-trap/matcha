@@ -1,32 +1,41 @@
 use super::{DeviceEventData, KeyInput};
 use std::collections::VecDeque;
 
+pub use winit::keyboard::{Key, KeyCode, ModifiersState};
+
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct KeyboardState {
-    press_order: VecDeque<(winit::keyboard::KeyCode, winit::keyboard::Key)>,
-    modifiers: winit::keyboard::ModifiersState,
+    press_order: VecDeque<(KeyCode, Key)>,
+    modifiers: ModifiersState,
 }
 
-// `KeyboardState` assumes winit issues `ModifiersChanged` followed by `KeyboardInput`.
 impl KeyboardState {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn modifiers_changed(&mut self, modifiers: winit::keyboard::ModifiersState) {
+    pub fn modifiers_changed(&mut self, modifiers: ModifiersState) {
         self.modifiers = modifiers;
     }
 
-    pub fn keyboard_input(&mut self, key_event: winit::event::KeyEvent) -> Option<DeviceEventData> {
-        let winit::keyboard::PhysicalKey::Code(key_code) = key_event.physical_key else {
+    /// Update internal state from `key_input`, fill `key_input.snapshot`, and return
+    /// the resulting `DeviceEventData`.
+    ///
+    /// Returns `None` if `key_input.physical_key` is not a `PhysicalKey::Code` variant.
+    pub fn keyboard_input(&mut self, key_input: &mut KeyInput) -> Option<DeviceEventData> {
+        use super::ElementState;
+        use super::key_input::PhysicalKey;
+
+        let PhysicalKey::Code(key_code) = key_input.physical_key else {
             return None;
         };
-        match key_event.state {
-            winit::event::ElementState::Pressed => {
+
+        match key_input.state {
+            ElementState::Pressed(_) => {
                 self.press_order
-                    .push_back((key_code, key_event.logical_key.clone()));
+                    .push_back((key_code, key_input.logical_key.clone()));
             }
-            winit::event::ElementState::Released => {
+            ElementState::Released(_) => {
                 if let Some(pos) = self
                     .press_order
                     .iter()
@@ -35,30 +44,31 @@ impl KeyboardState {
                     self.press_order.remove(pos);
                 }
             }
+            ElementState::LongPressed(_) => {}
         }
-        Some(DeviceEventData::Keyboard(KeyInput {
-            winit: key_event,
-            snapshot: self.clone(),
-        }))
+
+        key_input.snapshot = self.clone();
+
+        Some(DeviceEventData::Keyboard(key_input.clone()))
     }
 }
 
 impl KeyboardState {
-    pub fn is_physical_pressed(&self, key: &winit::keyboard::KeyCode) -> bool {
+    pub fn is_physical_pressed(&self, key: &KeyCode) -> bool {
         self.press_order.iter().any(|(code, _)| code == key)
     }
 
-    pub fn is_logical_pressed(&self, key: &winit::keyboard::Key) -> bool {
+    pub fn is_logical_pressed(&self, key: &Key) -> bool {
         self.press_order
             .iter()
             .any(|(_, logical_key)| logical_key == key)
     }
 
-    pub fn modifiers(&self) -> winit::keyboard::ModifiersState {
+    pub fn modifiers(&self) -> ModifiersState {
         self.modifiers
     }
 
-    pub fn press_order(&self) -> Vec<(winit::keyboard::KeyCode, winit::keyboard::Key)> {
+    pub fn press_order(&self) -> Vec<(KeyCode, Key)> {
         self.press_order.iter().cloned().collect()
     }
 }

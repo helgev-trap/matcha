@@ -1,15 +1,26 @@
 use super::{ElementState, KeyboardState};
-use winit::{event::KeyEvent as RawKeyEvent, keyboard::NamedKey};
+use winit::keyboard::NamedKey;
 
 pub use winit::keyboard::{Key, KeyCode, KeyLocation, ModifiersState, PhysicalKey};
 
 /// A keyboard event.
 ///
-/// This struct contains the raw `winit::event::KeyEvent` and a snapshot of the
-/// entire keyboard state at the moment the event occurred.
+/// This struct contains the decoded key event data and a snapshot of the entire
+/// keyboard state at the moment the event occurred.
+///
+/// When used as state-machine **input** (from `winit_interface`), `snapshot`
+/// should be left as `KeyboardState::default()` — the state machine fills it in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyInput {
-    pub winit: RawKeyEvent,
+    pub physical_key: PhysicalKey,
+    pub logical_key: Key,
+    /// The text produced by this key event, if any.
+    pub text: Option<String>,
+    pub location: KeyLocation,
+    /// `Pressed(0)` / `Released(0)` when used as input; populated by state machine on output.
+    pub state: ElementState,
+    pub repeat: bool,
+    /// Snapshot of all currently-held keys. Filled in by `KeyboardState::keyboard_input`.
     pub snapshot: KeyboardState,
 }
 
@@ -29,31 +40,29 @@ impl KeyInput {
 }
 
 /// Raw information about the key that triggered this event.
-///
-/// These methods delegate directly to the underlying `winit::event::KeyEvent`.
 impl KeyInput {
     pub fn physical_key(&self) -> PhysicalKey {
-        self.winit.physical_key
+        self.physical_key
     }
 
     pub fn logical_key(&self) -> &Key {
-        &self.winit.logical_key
+        &self.logical_key
     }
 
     pub fn text(&self) -> Option<&str> {
-        self.winit.text.as_deref()
+        self.text.as_deref()
     }
 
     pub fn location(&self) -> KeyLocation {
-        self.winit.location
+        self.location
     }
 
     pub fn state(&self) -> ElementState {
-        self.winit.state.into()
+        self.state
     }
 
     pub fn is_repeat(&self) -> bool {
-        self.winit.repeat
+        self.repeat
     }
 }
 
@@ -83,9 +92,6 @@ impl KeyInput {
 }
 
 /// General information about the keyboard state at the moment the event occurred.
-///
-/// These methods query the `KeyboardState` snapshot and are not limited to
-/// the key that triggered the event.
 impl KeyInput {
     /// Returns `true` if the given physical key was held down when the event occurred.
     pub fn is_physical_pressed(&self, key: KeyCode) -> bool {

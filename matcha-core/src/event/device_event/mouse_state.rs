@@ -1,10 +1,6 @@
 use super::{ButtonState, DeviceEventData, MouseInput, MouseLogicalButton};
 
 use std::time::{Duration, Instant};
-use winit::{
-    dpi::PhysicalPosition,
-    event::{MouseButton as WinitMouseButton, MouseScrollDelta},
-};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum MousePrimaryButton {
@@ -101,47 +97,26 @@ pub struct MouseState {
 }
 
 impl MouseState {
-    /// Creates a new `MouseState`.
-    ///
-    /// # Arguments
-    ///
-    /// * `combo_duration` - The time to detect a combo click.
-    /// * `long_press_duration` - The time to detect a long press.
-    /// * `primary_button` - The physical button to be treated as the primary button.
-    /// * `pixel_per_line` - Pixels per scroll line for line-delta scroll events.
-    ///
-    /// Returns `None` if `combo_duration` is greater than `long_press_duration`.
-    pub fn new(
-        combo_duration: Duration,
-        long_press_duration: Duration,
-        primary_button: MousePrimaryButton,
-        pixel_per_line: f32,
-    ) -> Option<Self> {
-        if combo_duration <= long_press_duration {
-            Some(Self {
-                combo_duration,
-                long_press_duration,
-                position: [0.0, 0.0],
-                primary_button,
-                pixel_per_line,
-                primary: ButtonState::default(),
-                dragging_from_primary: None,
-                secondary: ButtonState::default(),
-                dragging_from_secondary: None,
-                middle: ButtonState::default(),
-                dragging_from_middle: None,
-                back: ButtonState::default(),
-                back_dragging_from: None,
-                forward: ButtonState::default(),
-                forward_dragging_from: None,
-            })
-        } else {
-            None
-        }
-    }
-
     pub fn set_primary_button(&mut self, primary_button: MousePrimaryButton) {
         self.primary_button = primary_button;
+    }
+
+    pub fn map_logical_button(&self, button: super::mouse_input::PhysicalMouseButton) -> Option<MouseLogicalButton> {
+        use super::mouse_input::PhysicalMouseButton as W;
+        match button {
+            W::Left => Some(match self.primary_button {
+                MousePrimaryButton::Left => MouseLogicalButton::Primary,
+                MousePrimaryButton::Right => MouseLogicalButton::Secondary,
+            }),
+            W::Right => Some(match self.primary_button {
+                MousePrimaryButton::Left => MouseLogicalButton::Secondary,
+                MousePrimaryButton::Right => MouseLogicalButton::Primary,
+            }),
+            W::Middle => Some(MouseLogicalButton::Middle),
+            W::Back => Some(MouseLogicalButton::Back),
+            W::Forward => Some(MouseLogicalButton::Forward),
+            W::Other(_) => None,
+        }
     }
 
     pub fn primary_button(&self) -> MousePrimaryButton {
@@ -155,16 +130,19 @@ impl MouseState {
     pub fn scroll_pixel_per_line(&self) -> f32 {
         self.pixel_per_line
     }
+
+    pub fn pixel_per_line(&self) -> f32 {
+        self.pixel_per_line
+    }
 }
 
 impl MouseState {
     /// Handles a mouse move event.
     ///
-    /// Updates the cursor position and detects the start of a drag for any pressed buttons.
-    /// It generates a `CursorMove` event containing the drag state.
-    pub fn cursor_moved(&mut self, position: PhysicalPosition<f64>) -> DeviceEventData {
+    /// `position` is in physical pixels (already converted by the caller).
+    pub fn cursor_moved(&mut self, position: [f32; 2]) -> DeviceEventData {
         let prev_position = self.position;
-        self.position = [position.x as f32, position.y as f32];
+        self.position = position;
 
         if self.primary.is_pressed() && self.dragging_from_primary.is_none() {
             self.dragging_from_primary = Some(prev_position);
@@ -211,12 +189,10 @@ impl MouseState {
     }
 
     /// Generates a `MouseScroll` event.
-    pub fn mouse_wheel(&self, delta: MouseScrollDelta) -> DeviceEventData {
-        let delta = match delta {
-            MouseScrollDelta::LineDelta(x, y) => [x * self.pixel_per_line, y * self.pixel_per_line],
-            MouseScrollDelta::PixelDelta(PhysicalPosition { x, y }) => [x as f32, y as f32],
-        };
-
+    ///
+    /// `delta` is in physical pixels (LineDelta → pixel conversion done by caller using
+    /// `pixel_per_line()`).
+    pub fn mouse_wheel(&self, delta: [f32; 2]) -> DeviceEventData {
         Self::new_mouse_event(
             self.dragging_from_primary,
             self.dragging_from_secondary,
@@ -225,24 +201,11 @@ impl MouseState {
         )
     }
 
-    pub fn mouse_input(
-        &mut self,
-        physical_button: WinitMouseButton,
-        state: winit::event::ElementState,
-    ) -> Option<DeviceEventData> {
-        match state {
-            winit::event::ElementState::Pressed => self.button_pressed(physical_button),
-            winit::event::ElementState::Released => self.button_released(physical_button),
-        }
-    }
-
-    /// Handles a mouse button press event.
-    fn button_pressed(&mut self, physical_button: WinitMouseButton) -> Option<DeviceEventData> {
+    /// Handles a logical mouse button press.
+    pub fn button_pressed(&mut self, button: MouseLogicalButton) -> Option<DeviceEventData> {
         let now = Instant::now();
-
-        let logical_button = self.to_logical_button(physical_button)?;
         let combo_duration = self.combo_duration;
-        let (button_state, _) = self.get_mut_button_state(logical_button);
+        let (button_state, _) = self.get_mut_button_state(button);
         let click_state = button_state.press(now, combo_duration);
 
         Some(Self::new_mouse_event(
@@ -251,15 +214,14 @@ impl MouseState {
             self.dragging_from_middle,
             Some(MouseInput::Click {
                 click_state,
-                button: logical_button,
+                button,
             }),
         ))
     }
 
-    /// Handles a mouse button release event.
-    fn button_released(&mut self, physical_button: WinitMouseButton) -> Option<DeviceEventData> {
-        let logical_button = self.to_logical_button(physical_button)?;
-        let (button_state, dragging_from) = self.get_mut_button_state(logical_button);
+    /// Handles a logical mouse button release.
+    pub fn button_released(&mut self, button: MouseLogicalButton) -> Option<DeviceEventData> {
+        let (button_state, dragging_from) = self.get_mut_button_state(button);
         let click_state = button_state.release();
         *dragging_from = None;
 
@@ -269,16 +231,14 @@ impl MouseState {
             self.dragging_from_middle,
             Some(MouseInput::Click {
                 click_state,
-                button: logical_button,
+                button,
             }),
         ))
     }
 
     /// Detects long presses for all mouse buttons.
     ///
-    /// This method should be called on every frame update. It checks if any button has been
-    /// held down for the `long_press_duration` without being dragged, and if so, generates
-    /// a `LongPressed` event.
+    /// This method should be called on every frame update.
     pub fn long_pressing_detection(&mut self) -> Vec<DeviceEventData> {
         let now = Instant::now();
 
@@ -341,30 +301,6 @@ impl MouseState {
 impl MouseState {
     pub fn position(&self) -> [f32; 2] {
         self.position
-    }
-
-    /// Converts a physical `WinitMouseButton` to a `LogicalMouseButton` based on the primary button setting.
-    fn to_logical_button(&self, physical_button: WinitMouseButton) -> Option<MouseLogicalButton> {
-        match physical_button {
-            WinitMouseButton::Left => {
-                if self.primary_button == MousePrimaryButton::Left {
-                    Some(MouseLogicalButton::Primary)
-                } else {
-                    Some(MouseLogicalButton::Secondary)
-                }
-            }
-            WinitMouseButton::Right => {
-                if self.primary_button == MousePrimaryButton::Left {
-                    Some(MouseLogicalButton::Secondary)
-                } else {
-                    Some(MouseLogicalButton::Primary)
-                }
-            }
-            WinitMouseButton::Middle => Some(MouseLogicalButton::Middle),
-            WinitMouseButton::Back => Some(MouseLogicalButton::Back),
-            WinitMouseButton::Forward => Some(MouseLogicalButton::Forward),
-            _ => None,
-        }
     }
 
     /// Gets mutable references to the state for a specific logical button.

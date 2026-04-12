@@ -1,8 +1,3 @@
-use crate::event::{
-    EventStateConfig, device_event::DeviceEventState, window_event::WindowEventState,
-};
-use std::sync::Arc;
-
 pub mod window_config;
 pub use window_config::*;
 
@@ -14,7 +9,7 @@ pub trait WindowControler {
         config: &WindowConfig,
         instance: &wgpu::Instance,
         device: &wgpu::Device,
-    ) -> Result<Arc<WindowSurface>, WindowError>;
+    ) -> Result<WindowSurface, WindowError>;
 }
 
 // --- Common Types ---
@@ -25,152 +20,55 @@ pub struct WindowId {
 }
 
 pub struct Window {
-    // window
     config: WindowConfig,
-    window_surface: Option<Arc<WindowSurface>>,
-    renderable: Option<Arc<dyn WindowRenderable>>,
-
-    // render task
-    render_task_handle: Option<tokio::task::JoinHandle<Result<Option<()>, wgpu::SurfaceError>>>,
-
-    // event states
-    // TODO: use methods instead of public fields
-    pub(crate) device_event_state: DeviceEventState,
-    pub(crate) window_event_state: WindowEventState,
+    window_id: WindowId,
+    window_surface: Option<WindowSurface>,
 }
 
 impl Window {
-    pub(crate) fn new(
-        config: WindowConfig,
-        window_surface: Arc<WindowSurface>,
-        event_config: &EventStateConfig,
-    ) -> Self {
-        Self {
-            config,
+    pub fn new(
+        config: &WindowConfig,
+        ctrl: &dyn WindowControler,
+        instance: &wgpu::Instance,
+        device: &wgpu::Device,
+    ) -> Result<Self, WindowError> {
+        let window_surface = ctrl.create_native_window(&config, instance, device)?;
+        Ok(Self {
+            config: config.clone(),
+            window_id: window_surface.id(),
             window_surface: Some(window_surface),
-            renderable: None,
-            render_task_handle: None,
-            device_event_state: DeviceEventState::new(event_config.mouse)
-                .expect("EventStateConfig passed to Window::new must be valid"),
-            window_event_state: WindowEventState::default(),
-        }
+        })
     }
 
-    pub(crate) fn config(&self) -> &WindowConfig {
+    pub fn config(&self) -> &WindowConfig {
         &self.config
     }
 
-    pub(crate) fn set_surface(&mut self, surface: Option<Arc<WindowSurface>>) {
-        self.window_surface = surface;
-    }
-
-    pub(crate) fn has_surface(&self) -> bool {
+    pub fn has_surface(&self) -> bool {
         self.window_surface.is_some()
     }
 
-    pub(crate) fn set_renderable(&mut self, renderable: Option<Arc<dyn WindowRenderable>>) {
-        self.renderable = renderable;
+    /// Discard the native window surface (e.g. on `Suspended`).
+    /// The window config is retained so `enable` can recreate the surface later.
+    pub fn disable(&mut self) {
+        self.window_surface = None;
     }
 
-    pub(crate) async fn render_or_skip(
+    /// Recreate the native window surface (e.g. on `Resumed`).
+    /// Does nothing if the surface already exists.
+    pub fn enable(
         &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        tokio_runtime: &tokio::runtime::Handle,
-        if_previous_panicked: Option<impl FnOnce(Box<dyn std::any::Any + Send>) + Send + 'static>,
-    ) -> Result<(), wgpu::SurfaceError> {
-        if let Some(handle) = self.render_task_handle.take() {
-            if !handle.is_finished() {
-                self.render_task_handle = Some(handle);
-                return Ok(());
-            }
-
-            match handle.await {
-                Ok(Ok(_)) => {}
-                Ok(Err(e)) => {
-                    log::error!("Rendering failed: {}", e);
-                    return Err(e);
-                }
-                Err(join_error) => {
-                    if join_error.is_panic() {
-                        let panic = join_error.into_panic();
-
-                        match if_previous_panicked {
-                            Some(handler) => handler(panic),
-                            None => std::panic::resume_unwind(panic),
-                        }
-                    }
-                }
-            }
+        ctrl: &dyn WindowControler,
+        instance: &wgpu::Instance,
+        device: &wgpu::Device
+    ) -> Result<(), WindowError> {
+        if self.window_surface.is_some() {
+            return Ok(());
         }
-
-        if let Some(window_surface) = &self.window_surface {
-            if let Some(renderable) = self.renderable.as_ref()
-                && renderable.is_updated().await
-            {
-                let window_surface = window_surface.clone();
-                let device = device.clone();
-                let queue = queue.clone();
-                let renderable = renderable.clone();
-
-                let join_handle = tokio_runtime.spawn(async move {
-                    window_surface.rendering_with_surface_texture(
-                        &device,
-                        |view, target_texture| {
-                            let mut encoder =
-                                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                    label: Some("Window Render Encoder"),
-                                });
-
-                            let surface_config = window_surface.surface_config();
-                            let width = surface_config.width;
-                            let height = surface_config.height;
-
-                            let scale_factor = 1.0;
-
-                            let mut context = RenderContext {
-                                device: &device,
-                                queue: &queue,
-                                encoder: &mut encoder,
-                                view,
-                                target_texture,
-                                width,
-                                height,
-                                scale_factor,
-                            };
-
-                            renderable.render(&mut context);
-
-                            queue.submit(std::iter::once(encoder.finish()));
-                        },
-                    )
-                });
-                self.render_task_handle = Some(join_handle);
-            }
-        }
-
+        let surface = ctrl.create_native_window(&self.config, instance, device)?;
+        self.window_surface = Some(surface);
         Ok(())
     }
-}
-
-pub struct RenderContext<'a> {
-    pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
-    pub encoder: &'a mut wgpu::CommandEncoder,
-    pub view: &'a wgpu::TextureView,
-    pub target_texture: &'a wgpu::Texture,
-    pub width: u32,
-    pub height: u32,
-    pub scale_factor: f64,
-}
-
-#[async_trait::async_trait]
-pub trait WindowRenderable: Send + Sync + 'static {
-    async fn is_updated(&self) -> bool {
-        true
-    }
-
-    fn render(&self, ctx: &mut RenderContext);
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -181,17 +79,16 @@ pub enum WindowError {
     CreateWindowSurface(#[from] wgpu::CreateSurfaceError),
 }
 
-#[cfg(feature = "winit")]
-mod winit_window;
-#[cfg(feature = "winit")]
-pub(crate) use winit_window::*;
-
 // --- Platform-agnostic Window API ---
 //
-// These methods are defined here (not in window.rs) to keep window.rs free of
-// winit dependencies. All public signatures use types from window_config.
-
+// All type conversions between window_config types and backend-specific types
+// are performed inside WindowSurface (winit_window.rs). These methods are
+// pure delegations with no backend imports required.
 impl Window {
+    pub fn id(&self) -> WindowId {
+        self.window_id
+    }
+
     // --- Title ---
 
     pub fn title(&self) -> Option<String> {
@@ -209,35 +106,29 @@ impl Window {
     /// Returns the inner (client area) size in physical pixels, or `None` if
     /// the window has no surface (e.g. minimised / disabled).
     pub fn inner_size(&self) -> Option<[u32; 2]> {
-        self.window_surface.as_ref().map(|s| {
-            let size = s.inner_size();
-            [size.width, size.height]
-        })
+        self.window_surface.as_ref().map(|s| s.inner_size())
     }
 
     pub fn request_inner_size(&self, width: u32, height: u32) {
         if let Some(s) = &self.window_surface {
-            s.request_inner_size(winit::dpi::PhysicalSize::new(width, height));
+            s.request_inner_size(width, height);
         }
     }
 
     /// Returns the outer (including decorations) size in physical pixels.
     pub fn outer_size(&self) -> Option<[u32; 2]> {
-        self.window_surface.as_ref().map(|s| {
-            let size = s.outer_size();
-            [size.width, size.height]
-        })
+        self.window_surface.as_ref().map(|s| s.outer_size())
     }
 
     pub fn set_min_inner_size(&self, min_size: Option<window_config::Size>) {
         if let Some(s) = &self.window_surface {
-            s.set_min_inner_size(min_size.map(Into::into));
+            s.set_min_inner_size(min_size);
         }
     }
 
     pub fn set_max_inner_size(&self, max_size: Option<window_config::Size>) {
         if let Some(s) = &self.window_surface {
-            s.set_max_inner_size(max_size.map(Into::into));
+            s.set_max_inner_size(max_size);
         }
     }
 
@@ -245,12 +136,12 @@ impl Window {
     pub fn resize_increments(&self) -> Option<[u32; 2]> {
         self.window_surface
             .as_ref()
-            .and_then(|s| s.resize_increments().map(|size| [size.width, size.height]))
+            .and_then(|s| s.resize_increments())
     }
 
     pub fn set_resize_increments(&self, increments: Option<window_config::Size>) {
         if let Some(s) = &self.window_surface {
-            s.set_resize_increments(increments.map(Into::into));
+            s.set_resize_increments(increments);
         }
     }
 
@@ -261,7 +152,7 @@ impl Window {
     pub fn inner_position(&self) -> Option<[i32; 2]> {
         self.window_surface
             .as_ref()
-            .and_then(|s| s.inner_position().ok().map(|p| [p.x, p.y]))
+            .and_then(|s| s.inner_position())
     }
 
     /// Returns the outer position (top-left including decorations) in physical
@@ -269,19 +160,12 @@ impl Window {
     pub fn outer_position(&self) -> Option<[i32; 2]> {
         self.window_surface
             .as_ref()
-            .and_then(|s| s.outer_position().ok().map(|p| [p.x, p.y]))
+            .and_then(|s| s.outer_position())
     }
 
     pub fn set_outer_position(&self, position: window_config::Position) {
         if let Some(s) = &self.window_surface {
-            match position {
-                window_config::Position::Physical { x, y } => {
-                    s.request_outer_position_physical(winit::dpi::PhysicalPosition::new(x, y));
-                }
-                window_config::Position::Logical { x, y } => {
-                    s.request_outer_position_logical(winit::dpi::LogicalPosition::new(x, y));
-                }
-            }
+            s.set_outer_position(position);
         }
     }
 
@@ -298,14 +182,12 @@ impl Window {
     }
 
     pub fn fullscreen(&self) -> Option<window_config::Fullscreen> {
-        self.window_surface
-            .as_ref()
-            .and_then(|s| s.fullscreen().map(Into::into))
+        self.window_surface.as_ref().and_then(|s| s.fullscreen())
     }
 
     pub fn set_fullscreen(&self, fullscreen: Option<window_config::Fullscreen>) {
         if let Some(s) = &self.window_surface {
-            s.set_fullscreen(fullscreen.map(Into::into));
+            s.set_fullscreen(fullscreen);
         }
     }
 
@@ -342,26 +224,22 @@ impl Window {
     // --- Appearance ---
 
     pub fn theme(&self) -> Option<window_config::Theme> {
-        self.window_surface
-            .as_ref()
-            .and_then(|s| s.theme().map(Into::into))
+        self.window_surface.as_ref().and_then(|s| s.theme())
     }
 
     pub fn set_theme(&self, theme: Option<window_config::Theme>) {
         if let Some(s) = &self.window_surface {
-            s.set_theme(theme.map(Into::into));
+            s.set_theme(theme);
         }
     }
 
     pub fn enabled_buttons(&self) -> Option<window_config::WindowButtons> {
-        self.window_surface
-            .as_ref()
-            .map(|s| s.enabled_buttons().into())
+        self.window_surface.as_ref().map(|s| s.enabled_buttons())
     }
 
     pub fn set_enabled_buttons(&self, buttons: window_config::WindowButtons) {
         if let Some(s) = &self.window_surface {
-            s.set_enabled_buttons(buttons.into());
+            s.set_enabled_buttons(buttons);
         }
     }
 
@@ -380,7 +258,32 @@ impl Window {
             s.change_format(device, format);
         }
     }
+
+    // --- Surface access ---
+
+    pub fn surface(&self) -> Option<&WindowSurface> {
+        self.window_surface.as_ref()
+    }
+
+    pub fn surface_mut(&self) -> Option<&WindowSurface> {
+        self.window_surface.as_ref()
+    }
+
+    pub fn window_id(&self) -> Option<WindowId> {
+        self.window_surface.as_ref().map(|s| s.window_id())
+    }
+
+    pub fn request_redraw(&self) {
+        if let Some(s) = &self.window_surface {
+            s.request_redraw();
+        }
+    }
 }
+
+#[cfg(feature = "winit")]
+mod winit_window;
+#[cfg(feature = "winit")]
+pub(crate) use winit_window::*;
 
 #[cfg(feature = "baseview")]
 mod baseview_window;

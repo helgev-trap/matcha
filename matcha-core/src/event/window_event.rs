@@ -37,69 +37,39 @@ impl WindowEventState {
         }
     }
 
-    /// Handle `winit::event::WindowEvent::Resized`.
-    pub fn resized(&mut self, inner_size: [f32; 2], outer_size: [f32; 2]) -> WindowEvent {
-        self.inner_size = inner_size;
-        self.outer_size = outer_size;
-
-        WindowEvent {
-            data: WindowEventData::PositionSize {
-                inner_position: self.inner_position,
-                outer_position: self.outer_position,
-                inner_size: self.inner_size,
-                outer_size: self.outer_size,
-            },
+    /// Process an input WindowEvent from the windowing backend mapping it to a stateful event.
+    pub fn process(&mut self, event: WindowEvent) -> WindowEvent {
+        let mut out_data = event.data.clone();
+        match event.data {
+            WindowEventData::Resized {
+                inner_size,
+                outer_size,
+            } => {
+                self.inner_size = inner_size;
+                self.outer_size = outer_size;
+                out_data = WindowEventData::PositionSize {
+                    inner_position: self.inner_position,
+                    outer_position: self.outer_position,
+                    inner_size: self.inner_size,
+                    outer_size: self.outer_size,
+                };
+            }
+            WindowEventData::Moved {
+                inner_position,
+                outer_position,
+            } => {
+                self.inner_position = inner_position;
+                self.outer_position = outer_position;
+                out_data = WindowEventData::PositionSize {
+                    inner_position: self.inner_position,
+                    outer_position: self.outer_position,
+                    inner_size: self.inner_size,
+                    outer_size: self.outer_size,
+                };
+            }
+            _ => {}
         }
-    }
-
-    /// Handle `winit::event::WindowEvent::Moved`.
-    pub fn moved(&mut self, inner_position: [f32; 2], outer_position: [f32; 2]) -> WindowEvent {
-        self.inner_position = inner_position;
-        self.outer_position = outer_position;
-
-        WindowEvent {
-            data: WindowEventData::PositionSize {
-                inner_position: self.inner_position,
-                outer_position: self.outer_position,
-                inner_size: self.inner_size,
-                outer_size: self.outer_size,
-            },
-        }
-    }
-
-    /// Handle `winit::event::WindowEvent::CloseRequested`.
-    pub fn close_requested(&self) -> WindowEvent {
-        WindowEvent {
-            data: WindowEventData::CloseRequested,
-        }
-    }
-
-    /// Handle `winit::event::WindowEvent::Focused`.
-    pub fn focused(&self, focused: bool) -> WindowEvent {
-        WindowEvent {
-            data: WindowEventData::Focus(focused),
-        }
-    }
-
-    /// Handle `winit::event::WindowEvent::ThemeChanged`.
-    pub fn theme_changed(&self, theme: winit::window::Theme) -> WindowEvent {
-        WindowEvent {
-            data: WindowEventData::Theme(theme),
-        }
-    }
-
-    /// Handle `winit::event::WindowEvent::ScaleFactorChanged`.
-    pub fn scale_factor_changed(&self, scale_factor: f64) -> WindowEvent {
-        WindowEvent {
-            data: WindowEventData::ScaleFactorChanged { scale_factor },
-        }
-    }
-
-    /// Handle `winit::event::WindowEvent::Occluded`.
-    pub fn occluded(&self, occluded: bool) -> WindowEvent {
-        WindowEvent {
-            data: WindowEventData::Occluded(occluded),
-        }
+        WindowEvent { data: out_data }
     }
 }
 
@@ -117,6 +87,10 @@ pub struct WindowEvent {
 }
 
 impl WindowEvent {
+    pub fn stateless(data: WindowEventData) -> Self {
+        Self { data }
+    }
+
     pub fn data(&self) -> &WindowEventData {
         &self.data
     }
@@ -154,14 +128,19 @@ impl WindowEvent {
                 outer_position,
                 inner_size,
                 outer_size,
-            } => Some(f(*inner_position, *outer_position, *inner_size, *outer_size)),
+            } => Some(f(
+                *inner_position,
+                *outer_position,
+                *inner_size,
+                *outer_size,
+            )),
             _ => None,
         }
     }
 
     pub fn on_theme<F, R>(&self, f: F) -> Option<R>
     where
-        F: FnOnce(winit::window::Theme) -> R,
+        F: FnOnce(crate::window::window_config::Theme) -> R,
     {
         match &self.data {
             WindowEventData::Theme(theme) => Some(f(*theme)),
@@ -198,6 +177,16 @@ impl WindowEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum WindowEventData {
     CloseRequested,
+    /// Stateless input from windowing backend.
+    Resized {
+        inner_size: [f32; 2],
+        outer_size: [f32; 2],
+    },
+    /// Stateless input from windowing backend.
+    Moved {
+        inner_position: [f32; 2],
+        outer_position: [f32; 2],
+    },
     /// Combined position and size change (either a resize or a move was fired).
     PositionSize {
         inner_position: [f32; 2],
@@ -206,7 +195,9 @@ pub enum WindowEventData {
         outer_size: [f32; 2],
     },
     Focus(bool),
-    Theme(winit::window::Theme),
-    ScaleFactorChanged { scale_factor: f64 },
+    Theme(crate::window::window_config::Theme),
+    ScaleFactorChanged {
+        scale_factor: f64,
+    },
     Occluded(bool),
 }

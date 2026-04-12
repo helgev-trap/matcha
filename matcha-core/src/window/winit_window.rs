@@ -1,5 +1,18 @@
 use std::sync::Arc;
 
+// ---------------------------------------------------------------------------
+// WindowId ↔ winit::window::WindowId conversion
+// ---------------------------------------------------------------------------
+
+impl From<winit::window::WindowId> for super::WindowId {
+    fn from(id: winit::window::WindowId) -> Self {
+        let u64_id: u64 = id.into();
+        super::WindowId {
+            id: u64_id as usize,
+        }
+    }
+}
+
 // Implement WindowControler for Winit EventLoop
 impl super::WindowControler for winit::event_loop::ActiveEventLoop {
     fn create_native_window(
@@ -7,10 +20,10 @@ impl super::WindowControler for winit::event_loop::ActiveEventLoop {
         config: &super::WindowConfig,
         instance: &wgpu::Instance,
         device: &wgpu::Device,
-    ) -> Result<std::sync::Arc<WindowSurface>, super::WindowError> {
+    ) -> Result<WindowSurface, super::WindowError> {
         let surface = WindowSurface::new(self, config, instance, device)
             .map_err(|e| super::WindowError::BackendError(e.to_string()))?;
-        Ok(std::sync::Arc::new(surface))
+        Ok(surface)
     }
 }
 
@@ -77,7 +90,18 @@ impl WindowSurface {
 }
 
 /// Setters and Getters
+///
+/// All signatures use platform-agnostic types from `window_config`.
+/// Conversions to/from winit types are done here, so callers never need
+/// to import winit directly.
 impl WindowSurface {
+    pub fn id(&self) -> super::WindowId {
+        let u64_id: u64 = self.window.id().into();
+        super::WindowId {
+            id: u64_id as usize,
+        }
+    }
+
     pub fn title(&self) -> String {
         self.window.title()
     }
@@ -85,6 +109,68 @@ impl WindowSurface {
     pub fn set_title(&self, title: &str) {
         self.window.set_title(title);
     }
+
+    // --- Size ---
+
+    pub fn inner_size(&self) -> [u32; 2] {
+        let s = self.window.inner_size();
+        [s.width, s.height]
+    }
+
+    pub fn request_inner_size(&self, width: u32, height: u32) {
+        let _ = self
+            .window
+            .request_inner_size(winit::dpi::PhysicalSize::new(width, height));
+    }
+
+    pub fn outer_size(&self) -> [u32; 2] {
+        let s = self.window.outer_size();
+        [s.width, s.height]
+    }
+
+    pub fn resize_increments(&self) -> Option<[u32; 2]> {
+        self.window.resize_increments().map(|s| [s.width, s.height])
+    }
+
+    pub fn set_resize_increments(&self, increments: Option<super::Size>) {
+        self.window
+            .set_resize_increments(increments.map(Into::<winit::dpi::Size>::into));
+    }
+
+    pub fn set_min_inner_size(&self, min_size: Option<super::Size>) {
+        self.window
+            .set_min_inner_size(min_size.map(Into::<winit::dpi::Size>::into));
+    }
+
+    pub fn set_max_inner_size(&self, max_size: Option<super::Size>) {
+        self.window
+            .set_max_inner_size(max_size.map(Into::<winit::dpi::Size>::into));
+    }
+
+    // --- Position ---
+
+    pub fn inner_position(&self) -> Option<[i32; 2]> {
+        self.window.inner_position().ok().map(|p| [p.x, p.y])
+    }
+
+    pub fn outer_position(&self) -> Option<[i32; 2]> {
+        self.window.outer_position().ok().map(|p| [p.x, p.y])
+    }
+
+    pub fn set_outer_position(&self, position: super::Position) {
+        match position {
+            super::Position::Physical { x, y } => {
+                self.window
+                    .set_outer_position(winit::dpi::PhysicalPosition::new(x, y));
+            }
+            super::Position::Logical { x, y } => {
+                self.window
+                    .set_outer_position(winit::dpi::LogicalPosition::new(x, y));
+            }
+        }
+    }
+
+    // --- Window state ---
 
     pub fn maximized(&self) -> bool {
         self.window.is_maximized()
@@ -94,50 +180,57 @@ impl WindowSurface {
         self.window.set_maximized(maximized);
     }
 
-    pub fn fullscreen(&self) -> Option<winit::window::Fullscreen> {
-        self.window.fullscreen()
+    pub fn fullscreen(&self) -> Option<super::Fullscreen> {
+        self.window.fullscreen().map(Into::into)
     }
 
-    pub fn set_fullscreen(&self, fullscreen: Option<winit::window::Fullscreen>) {
-        self.window.set_fullscreen(fullscreen);
+    pub fn set_fullscreen(&self, fullscreen: Option<super::Fullscreen>) {
+        self.window.set_fullscreen(fullscreen.map(Into::into));
     }
 
-    pub fn inner_size(&self) -> winit::dpi::PhysicalSize<u32> {
-        self.window.inner_size()
+    pub fn is_resizable(&self) -> bool {
+        self.window.is_resizable()
     }
 
-    // todo: handle request result
-    pub fn request_inner_size(&self, size: winit::dpi::PhysicalSize<u32>) {
-        let _ = self.window.request_inner_size(size);
+    pub fn set_resizable(&self, resizable: bool) {
+        self.window.set_resizable(resizable);
     }
 
-    pub fn outer_size(&self) -> winit::dpi::PhysicalSize<u32> {
-        self.window.outer_size()
+    pub fn is_decorated(&self) -> bool {
+        self.window.is_decorated()
     }
 
-    pub fn request_outer_size(&self, size: impl Into<winit::dpi::Position>) {
-        self.window.set_outer_position(size);
+    pub fn set_decorations(&self, decorations: bool) {
+        self.window.set_decorations(decorations);
     }
 
-    pub fn inner_position(
-        &self,
-    ) -> Result<winit::dpi::PhysicalPosition<i32>, winit::error::NotSupportedError> {
-        self.window.inner_position()
+    pub fn is_visible(&self) -> Option<bool> {
+        self.window.is_visible()
     }
 
-    pub fn outer_position(
-        &self,
-    ) -> Result<winit::dpi::PhysicalPosition<i32>, winit::error::NotSupportedError> {
-        self.window.outer_position()
+    pub fn set_visible(&self, visible: bool) {
+        self.window.set_visible(visible);
     }
 
-    pub fn request_outer_position_physical(&self, position: winit::dpi::PhysicalPosition<i32>) {
-        self.window.set_outer_position(position);
+    // --- Appearance ---
+
+    pub fn theme(&self) -> Option<super::Theme> {
+        self.window.theme().map(Into::into)
     }
 
-    pub fn request_outer_position_logical(&self, position: winit::dpi::LogicalPosition<f64>) {
-        self.window.set_outer_position(position);
+    pub fn set_theme(&self, theme: Option<super::Theme>) {
+        self.window.set_theme(theme.map(Into::into));
     }
+
+    pub fn enabled_buttons(&self) -> super::WindowButtons {
+        self.window.enabled_buttons().into()
+    }
+
+    pub fn set_enabled_buttons(&self, buttons: super::WindowButtons) {
+        self.window.set_enabled_buttons(buttons.into());
+    }
+
+    // --- DPI / surface format ---
 
     pub fn dpi(&self) -> f64 {
         self.window.scale_factor()
@@ -151,62 +244,6 @@ impl WindowSurface {
         let mut config = self.current_config.lock();
         config.format = format;
         self.surface.configure(device, &config);
-    }
-
-    pub fn is_resizable(&self) -> bool {
-        self.window.is_resizable()
-    }
-
-    pub fn set_resizable(&self, resizable: bool) {
-        self.window.set_resizable(resizable);
-    }
-
-    pub fn enabled_buttons(&self) -> winit::window::WindowButtons {
-        self.window.enabled_buttons()
-    }
-
-    pub fn set_enabled_buttons(&self, buttons: winit::window::WindowButtons) {
-        self.window.set_enabled_buttons(buttons);
-    }
-
-    pub fn is_decorated(&self) -> bool {
-        self.window.is_decorated()
-    }
-
-    pub fn set_decorations(&self, decorations: bool) {
-        self.window.set_decorations(decorations);
-    }
-
-    pub fn theme(&self) -> Option<winit::window::Theme> {
-        self.window.theme()
-    }
-
-    pub fn set_theme(&self, theme: Option<winit::window::Theme>) {
-        self.window.set_theme(theme);
-    }
-
-    pub fn is_visible(&self) -> Option<bool> {
-        self.window.is_visible()
-    }
-
-    pub fn set_visible(&self, visible: bool) {
-        self.window.set_visible(visible);
-    }
-
-    pub fn resize_increments(&self) -> Option<winit::dpi::PhysicalSize<u32>> {
-        self.window.resize_increments()
-    }
-
-    pub fn set_resize_increments(&self, increments: Option<winit::dpi::Size>) {
-        self.window.set_resize_increments(increments);
-    }
-
-    pub fn set_min_inner_size(&self, min_size: Option<winit::dpi::Size>) {
-        self.window.set_min_inner_size(min_size);
-    }
-
-    pub fn set_max_inner_size(&self, max_size: Option<winit::dpi::Size>) {
-        self.window.set_max_inner_size(max_size);
     }
 }
 

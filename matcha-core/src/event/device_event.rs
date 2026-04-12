@@ -4,7 +4,7 @@ mod button_state;
 mod element_state;
 mod key_input;
 mod key_state;
-mod mouse_input;
+pub mod mouse_input;
 mod mouse_state;
 
 use std::path::PathBuf;
@@ -27,10 +27,10 @@ pub use mouse_state::{MousePrimaryButton, MouseStateConfig};
 // DeviceEventState
 // ----------------------------------------------------------------------------
 
-/// Stateful processor for raw winit events.
+/// Stateful processor for device input events.
 ///
-/// This struct tracks the state of input devices (mouse, keyboard) for a single window
-/// and produces higher-level `DeviceEvent` events.
+/// All methods accept platform-agnostic custom types only; the caller
+/// (e.g. `winit_interface`) is responsible for mapping platform types before calling.
 #[derive(Debug)]
 pub struct DeviceEventState {
     mouse: MouseState,
@@ -48,6 +48,17 @@ impl DeviceEventState {
             keyboard: KeyboardState::new(),
         })
     }
+
+    /// Returns the primary mouse button setting (needed by callers to map physical buttons).
+    pub fn mouse_primary_button(&self) -> MousePrimaryButton {
+        self.mouse.primary_button()
+    }
+
+    /// Returns the pixels-per-line scroll conversion factor (needed by callers to convert
+    /// `LineDelta` scroll events).
+    pub fn pixel_per_line(&self) -> f32 {
+        self.mouse.pixel_per_line()
+    }
 }
 
 impl Default for DeviceEventState {
@@ -58,124 +69,73 @@ impl Default for DeviceEventState {
 }
 
 impl DeviceEventState {
-    /// Handle `winit::event::WindowEvent::CursorMoved`.
-    pub fn cursor_moved(
-        &mut self,
-        position: winit::dpi::PhysicalPosition<f64>,
-    ) -> DeviceEvent {
-        let data = self.mouse.cursor_moved(position);
-        DeviceEvent {
-            raw: data.clone(),
-            mouse_viewport_position: self.mouse.position(),
-            left_multiplied_transform: nalgebra::Matrix4::identity(),
-            left_multiplied_transform_inv: Some(nalgebra::Matrix4::identity()),
-            relative: data,
-        }
-    }
+    /// Process a stateless input event and return a stateful output event.
+    pub fn process(&mut self, event: DeviceEvent) -> Option<DeviceEvent> {
+        let input_data = event.relative;
+        let updated_data = match input_data {
+            DeviceEventData::MouseInput { event: Some(mouse_input), .. } => {
+                match mouse_input {
+                    MouseInput::Moved { position } => {
+                        self.mouse.cursor_moved(position)
+                    }
+                    MouseInput::Entered => {
+                        self.mouse.cursor_entered()
+                    }
+                    MouseInput::Left => {
+                        self.mouse.cursor_left()
+                    }
+                    MouseInput::ScrollRaw { delta } => {
+                        let pixels = match delta {
+                            crate::event::device_event::mouse_input::ScrollDelta::LineDelta(x, y) => {
+                                [x * self.mouse.pixel_per_line(), y * self.mouse.pixel_per_line()]
+                            }
+                            crate::event::device_event::mouse_input::ScrollDelta::PixelDelta(pos) => pos,
+                        };
+                        self.mouse.mouse_wheel(pixels)
+                    }
+                    MouseInput::ButtonInput { state, button } => {
+                        if let Some(logical) = self.mouse.map_logical_button(button) {
+                            match state {
+                                ElementState::Pressed(_) => {
+                                    self.mouse.button_pressed(logical)?
+                                }
+                                ElementState::Released(_) | ElementState::LongPressed(_) => {
+                                    self.mouse.button_released(logical)?
+                                }
+                            }
+                        } else {
+                            return None;
+                        }
+                    }
+                    _ => return None,
+                }
+            }
+            DeviceEventData::Keyboard(mut key_input) => {
+                self.keyboard.keyboard_input(&mut key_input)?
+            }
+            DeviceEventData::ModifiersChanged(modifiers) => {
+                self.keyboard.modifiers_changed(modifiers);
+                DeviceEventData::ModifiersChanged(modifiers)
+            }
+            DeviceEventData::FileDrop { path_buf } => {
+                DeviceEventData::FileDrop { path_buf }
+            }
+            DeviceEventData::FileHover { path_buf } => {
+                DeviceEventData::FileHover { path_buf }
+            }
+            DeviceEventData::FileHoverCancelled => {
+                DeviceEventData::FileHoverCancelled
+            }
+            _ => return None,
+        };
 
-    /// Handle `winit::event::WindowEvent::CursorEntered`.
-    pub fn cursor_entered(&self) -> DeviceEvent {
-        let data = self.mouse.cursor_entered();
-        DeviceEvent {
-            raw: data.clone(),
-            mouse_viewport_position: self.mouse.position(),
-            left_multiplied_transform: nalgebra::Matrix4::identity(),
-            left_multiplied_transform_inv: Some(nalgebra::Matrix4::identity()),
-            relative: data,
-        }
-    }
-
-    /// Handle `winit::event::WindowEvent::CursorLeft`.
-    pub fn cursor_left(&self) -> DeviceEvent {
-        let data = self.mouse.cursor_left();
-        DeviceEvent {
-            raw: data.clone(),
-            mouse_viewport_position: self.mouse.position(),
-            left_multiplied_transform: nalgebra::Matrix4::identity(),
-            left_multiplied_transform_inv: Some(nalgebra::Matrix4::identity()),
-            relative: data,
-        }
-    }
-
-    /// Handle `winit::event::WindowEvent::MouseWheel`.
-    pub fn mouse_wheel(&self, delta: winit::event::MouseScrollDelta) -> DeviceEvent {
-        let data = self.mouse.mouse_wheel(delta);
-        DeviceEvent {
-            raw: data.clone(),
-            mouse_viewport_position: self.mouse.position(),
-            left_multiplied_transform: nalgebra::Matrix4::identity(),
-            left_multiplied_transform_inv: Some(nalgebra::Matrix4::identity()),
-            relative: data,
-        }
-    }
-
-    /// Handle `winit::event::WindowEvent::MouseInput`.
-    pub fn mouse_input(
-        &mut self,
-        button: winit::event::MouseButton,
-        state: winit::event::ElementState,
-    ) -> Option<DeviceEvent> {
-        let data = self.mouse.mouse_input(button, state)?;
         Some(DeviceEvent {
-            raw: data.clone(),
+            raw: updated_data.clone(),
             mouse_viewport_position: self.mouse.position(),
             left_multiplied_transform: nalgebra::Matrix4::identity(),
             left_multiplied_transform_inv: Some(nalgebra::Matrix4::identity()),
-            relative: data,
+            relative: updated_data,
         })
-    }
-
-    /// Handle `winit::event::WindowEvent::KeyboardInput`.
-    pub fn keyboard_input(&mut self, key_event: winit::event::KeyEvent) -> Option<DeviceEvent> {
-        let data = self.keyboard.keyboard_input(key_event)?;
-        Some(DeviceEvent {
-            raw: data.clone(),
-            mouse_viewport_position: self.mouse.position(),
-            left_multiplied_transform: nalgebra::Matrix4::identity(),
-            left_multiplied_transform_inv: Some(nalgebra::Matrix4::identity()),
-            relative: data,
-        })
-    }
-
-    /// Handle `winit::event::WindowEvent::ModifiersChanged`.
-    pub fn modifiers_changed(&mut self, modifiers: winit::keyboard::ModifiersState) {
-        self.keyboard.modifiers_changed(modifiers);
-    }
-
-    /// Handle `winit::event::WindowEvent::DroppedFile`.
-    pub fn dropped_file(&self, path_buf: PathBuf) -> DeviceEvent {
-        let data = DeviceEventData::FileDrop { path_buf };
-        DeviceEvent {
-            raw: data.clone(),
-            mouse_viewport_position: self.mouse.position(),
-            left_multiplied_transform: nalgebra::Matrix4::identity(),
-            left_multiplied_transform_inv: Some(nalgebra::Matrix4::identity()),
-            relative: data,
-        }
-    }
-
-    /// Handle `winit::event::WindowEvent::HoveredFile`.
-    pub fn hovered_file(&self, path_buf: PathBuf) -> DeviceEvent {
-        let data = DeviceEventData::FileHover { path_buf };
-        DeviceEvent {
-            raw: data.clone(),
-            mouse_viewport_position: self.mouse.position(),
-            left_multiplied_transform: nalgebra::Matrix4::identity(),
-            left_multiplied_transform_inv: Some(nalgebra::Matrix4::identity()),
-            relative: data,
-        }
-    }
-
-    /// Handle `winit::event::WindowEvent::HoveredFileCancelled`.
-    pub fn hovered_file_cancelled(&self) -> DeviceEvent {
-        let data = DeviceEventData::FileHoverCancelled;
-        DeviceEvent {
-            raw: data.clone(),
-            mouse_viewport_position: self.mouse.position(),
-            left_multiplied_transform: nalgebra::Matrix4::identity(),
-            left_multiplied_transform_inv: Some(nalgebra::Matrix4::identity()),
-            relative: data,
-        }
     }
 
     /// Detect long presses for all mouse buttons.
@@ -214,6 +174,16 @@ pub struct DeviceEvent {
 }
 
 impl DeviceEvent {
+    pub fn stateless(data: DeviceEventData) -> Self {
+        Self {
+            raw: data.clone(),
+            mouse_viewport_position: [0.0, 0.0],
+            left_multiplied_transform: nalgebra::Matrix4::identity(),
+            left_multiplied_transform_inv: Some(nalgebra::Matrix4::identity()),
+            relative: data,
+        }
+    }
+
     /// Apply a child widget's affine transform to produce a new event in that widget's
     /// local coordinate space.
     pub fn transform(&self, child_affine: nalgebra::Matrix4<f32>) -> Self {
@@ -574,6 +544,7 @@ pub enum DeviceEventData {
     },
     FileHoverCancelled,
     Keyboard(KeyInput),
+    ModifiersChanged(ModifiersState),
     /// Not implemented yet.
     Ime,
     MouseInput {

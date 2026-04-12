@@ -387,9 +387,6 @@ impl Arrangement {
     }
 
     /// Returns true if the given global `position` lies inside the child's arranged rectangle.
-    ///
-    /// Returns false if `affine_inv` is None (collapsed axis). Otherwise transforms to local
-    /// coordinates and checks against `size`. NaN/Infinite local coordinates are treated as outside.
     pub fn contains(&self, position: [f32; 2]) -> bool {
         let local = self.to_local(position);
 
@@ -397,7 +394,6 @@ impl Arrangement {
             return false;
         }
 
-        // allow inclusive bounds
         (0.0..=self.size[0]).contains(&local[0]) && (0.0..=self.size[1]).contains(&local[1])
     }
 }
