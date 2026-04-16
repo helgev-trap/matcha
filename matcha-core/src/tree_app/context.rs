@@ -158,13 +158,12 @@ impl UiContext<'_> {
     }
 
     pub fn create_window(&self, config: &WindowConfig) -> Result<Window, WindowError> {
-        self.render_ctx.gpu.with_device_queue(|device, _queue| {
-            Window::new(
-                config,
-                self.event_loop,
-                self.render_ctx.gpu.instance(),
-                device,
-            )
-        })
+        let (device, _queue) = self.render_ctx.gpu.context().unwrap();
+        Window::new(
+            config,
+            self.event_loop,
+            self.render_ctx.gpu.instance(),
+            &device,
+        )
     }
 }

@@ -89,24 +89,6 @@ impl<App: Application> Adapter<App> {
     }
 }
 
-/// Per-window state machine access
-impl<App: Application> Adapter<App> {
-    /// Returns a mutable reference to the state machine for `id`,
-    /// creating it with the stored `event_config` if it doesn't exist yet.
-    fn window_state_mut(&mut self, id: WindowId) -> &mut PerWindowState {
-        let config = self.event_config; // EventStateConfig is Copy
-        self.window_states
-            .entry(id)
-            .or_insert_with(|| PerWindowState::new(&config))
-    }
-
-    /// Removes the state machine for `id`.
-    /// Called when winit fires `WindowEvent::Destroyed`.
-    fn remove_window_state(&mut self, id: WindowId) {
-        self.window_states.remove(&id);
-    }
-}
-
 /// Lifecycle events
 impl<App: Application> Adapter<App> {
     pub fn init(&mut self, event_loop: &impl EventLoop) {
@@ -125,7 +107,10 @@ impl<App: Application> Adapter<App> {
             .create_window(self.tokio_runtime.handle(), event_loop);
     }
 
-    pub fn destroy_window(&self, event_loop: &impl EventLoop) {
+    pub fn destroy_window(&mut self, event_loop: &impl EventLoop) {
+        // ensure all rendering tasks are finished
+        self.abort_all_rendering_tasks();
+
         let _guard = self.tokio_runtime.enter();
         self.app
             .destroy_window(self.tokio_runtime.handle(), event_loop);
@@ -182,6 +167,8 @@ impl<App: Application> Adapter<App> {
     pub fn window_destroyed(&mut self, event_loop: &impl EventLoop, window_id: WindowId) {
         // Clean up the per-window state machine so it doesn't outlive the window.
         self.remove_window_state(window_id);
+        // Clean up the rendering task for the window.
+        self.remove_rendering_task(window_id);
         // Notify the Application that the window is gone.
         let _guard = self.tokio_runtime.enter();
         self.app.window_destroyed(event_loop, window_id);
@@ -276,6 +263,48 @@ impl<App: Application> Adapter<App> {
     pub fn memory_warning(&mut self, event_loop: &impl EventLoop) {
         let _guard = self.tokio_runtime.enter();
         self.app.memory_warning(event_loop);
+    }
+}
+
+// -------------------
+// Helpers
+// -------------------
+
+impl<App: Application> Adapter<App> {
+    fn abort_all_rendering_tasks(&mut self) {
+        self.tokio_runtime.block_on(async {
+            for handle in self.rendering_window.values() {
+                handle.abort();
+            }
+            for (_, handle) in self.rendering_window.drain() {
+                let _ = handle.await;
+            }
+        });
+    }
+
+    fn remove_rendering_task(&mut self, window_id: WindowId) {
+        if let Some(handle) = self.rendering_window.get(&window_id) {
+            handle.abort();
+            self.rendering_window.remove(&window_id);
+        }
+    }
+}
+
+/// Per-window state machine access
+impl<App: Application> Adapter<App> {
+    /// Returns a mutable reference to the state machine for `id`,
+    /// creating it with the stored `event_config` if it doesn't exist yet.
+    fn window_state_mut(&mut self, id: WindowId) -> &mut PerWindowState {
+        let config = self.event_config; // EventStateConfig is Copy
+        self.window_states
+            .entry(id)
+            .or_insert_with(|| PerWindowState::new(&config))
+    }
+
+    /// Removes the state machine for `id`.
+    /// Called when winit fires `WindowEvent::Destroyed`.
+    fn remove_window_state(&mut self, id: WindowId) {
+        self.window_states.remove(&id);
     }
 }
 
