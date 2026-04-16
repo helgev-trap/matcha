@@ -155,7 +155,8 @@ impl<App: Application> Adapter<App> {
     ) {
         let _guard = self.tokio_runtime.enter();
         let event = self.window_state_mut(window_id).window.process(event);
-        self.app.window_event(event_loop, window_id, event);
+        self.app
+            .window_event(self.tokio_runtime.handle(), event_loop, window_id, event);
     }
 
     pub fn window_destroyed(&mut self, event_loop: &impl EventLoop, window_id: WindowId) {
@@ -165,7 +166,8 @@ impl<App: Application> Adapter<App> {
         self.remove_rendering_task(window_id);
         // Notify the Application that the window is gone.
         let _guard = self.tokio_runtime.enter();
-        self.app.window_destroyed(event_loop, window_id);
+        self.app
+            .window_destroyed(self.tokio_runtime.handle(), event_loop, window_id);
     }
 
     pub fn device_event(
@@ -176,7 +178,12 @@ impl<App: Application> Adapter<App> {
     ) {
         if let Some(processed) = self.window_state_mut(window_id).device.process(event) {
             let _guard = self.tokio_runtime.enter();
-            self.app.device_event(event_loop, window_id, processed);
+            self.app.device_event(
+                self.tokio_runtime.handle(),
+                event_loop,
+                window_id,
+                processed,
+            );
         }
     }
 
@@ -187,8 +194,12 @@ impl<App: Application> Adapter<App> {
         raw_event: RawDeviceEvent,
     ) {
         let _guard = self.tokio_runtime.enter();
-        self.app
-            .raw_device_event(event_loop, raw_device_id, raw_event);
+        self.app.raw_device_event(
+            self.tokio_runtime.handle(),
+            event_loop,
+            raw_device_id,
+            raw_event,
+        );
     }
 }
 
@@ -197,12 +208,14 @@ impl<App: Application> Adapter<App> {
     /// Called when a `BufferUpdated` event is received from the bridge thread.
     pub fn buffer_updated(&mut self, event_loop: &impl EventLoop) {
         let _guard = self.tokio_runtime.enter();
-        self.app.buffer_updated(event_loop);
+        self.app
+            .buffer_updated(self.tokio_runtime.handle(), event_loop);
     }
 
     pub fn backend_message(&mut self, event_loop: &impl EventLoop, msg: App::Msg) {
         let _guard = self.tokio_runtime.enter();
-        self.app.backend_message(event_loop, msg);
+        self.app
+            .backend_message(self.tokio_runtime.handle(), event_loop, msg);
     }
 }
 
@@ -217,7 +230,7 @@ impl<App: Application> Adapter<App> {
 impl<App: Application> Adapter<App> {
     pub fn poll(&mut self, event_loop: &impl EventLoop) {
         let _guard = self.tokio_runtime.enter();
-        self.app.poll(event_loop);
+        self.app.poll(self.tokio_runtime.handle(), event_loop);
     }
 
     pub fn resume_time_reached(
@@ -227,8 +240,12 @@ impl<App: Application> Adapter<App> {
         requested_resume: std::time::Instant,
     ) {
         let _guard = self.tokio_runtime.enter();
-        self.app
-            .resume_time_reached(event_loop, start, requested_resume);
+        self.app.resume_time_reached(
+            self.tokio_runtime.handle(),
+            event_loop,
+            start,
+            requested_resume,
+        );
     }
 
     pub fn wait_cancelled(
@@ -238,19 +255,26 @@ impl<App: Application> Adapter<App> {
         requested_resume: Option<std::time::Instant>,
     ) {
         let _guard = self.tokio_runtime.enter();
-        self.app.wait_cancelled(event_loop, start, requested_resume);
+        self.app.wait_cancelled(
+            self.tokio_runtime.handle(),
+            event_loop,
+            start,
+            requested_resume,
+        );
     }
 
     pub fn about_to_wait(&self, event_loop: &impl EventLoop) {
         let _guard = self.tokio_runtime.enter();
-        self.app.about_to_wait(event_loop);
+        self.app
+            .about_to_wait(self.tokio_runtime.handle(), event_loop);
     }
 }
 
 impl<App: Application> Adapter<App> {
     pub fn memory_warning(&mut self, event_loop: &impl EventLoop) {
         let _guard = self.tokio_runtime.enter();
-        self.app.memory_warning(event_loop);
+        self.app
+            .memory_warning(self.tokio_runtime.handle(), event_loop);
     }
 }
 

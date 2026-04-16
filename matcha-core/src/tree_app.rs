@@ -268,15 +268,31 @@ impl<C: Component> Application for TreeApp<C> {
 
     fn window_event(
         &self,
-        _event_loop: &impl EventLoop,
-        _window_id: WindowId,
-        _event: WindowEvent,
+        runtime: &tokio::runtime::Handle,
+        event_loop: &impl EventLoop,
+        window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        // TODO
+    }
+
+    fn window_destroyed(
+        &self,
+        runtime: &tokio::runtime::Handle,
+        event_loop: &impl EventLoop,
+        window_id: WindowId,
     ) {
         // TODO
     }
 
     /// Routes a device event to the widget tree of the target window.
-    fn device_event(&self, event_loop: &impl EventLoop, window_id: WindowId, event: DeviceEvent) {
+    fn device_event(
+        &self,
+        runtime: &tokio::runtime::Handle,
+        event_loop: &impl EventLoop,
+        window_id: WindowId,
+        event: DeviceEvent,
+    ) {
         let handle = tokio::runtime::Handle::current();
         let inner = self.state.lock();
 
@@ -294,9 +310,10 @@ impl<C: Component> Application for TreeApp<C> {
 
     fn raw_device_event(
         &self,
-        _event_loop: &impl EventLoop,
-        _raw_device_id: RawDeviceId,
-        _raw_event: RawDeviceEvent,
+        runtime: &tokio::runtime::Handle,
+        event_loop: &impl EventLoop,
+        raw_device_id: RawDeviceId,
+        raw_event: RawDeviceEvent,
     ) {
         // TODO
     }
@@ -306,10 +323,9 @@ impl<C: Component> Application for TreeApp<C> {
     // -------------------------------------------------------------------------
 
     /// Rebuilds the view tree after `SharedValue::store()` signals a change.
-    fn buffer_updated(&self, event_loop: &impl EventLoop) {
-        let handle = tokio::runtime::Handle::current();
+    fn buffer_updated(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
         let mut inner = self.state.lock();
-        inner.run_update(&handle, event_loop, &self.gpu);
+        inner.run_update(runtime, event_loop, &self.gpu);
     }
 
     /// Delivers a typed message directly to the root component.
@@ -317,10 +333,9 @@ impl<C: Component> Application for TreeApp<C> {
     /// Typically the component will call `SharedValue::store()` in response,
     /// which triggers a `BufferUpdated` event → `buffer_updated()` → full
     /// view rebuild.
-    fn backend_message(&self, event_loop: &impl EventLoop, msg: C::Message) {
-        let handle = tokio::runtime::Handle::current();
+    fn backend_message(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop, msg: C::Message) {
         let inner = self.state.lock();
-        let ctx = inner.ui_ctx(&handle, event_loop, &self.gpu);
+        let ctx = inner.ui_ctx(runtime, event_loop, &self.gpu);
         inner.root.update(msg, &ctx);
     }
 }

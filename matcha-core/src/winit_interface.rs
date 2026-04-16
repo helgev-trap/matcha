@@ -1,9 +1,7 @@
 use crate::{
     adapter::{Adapter, ApplicationCommand, EventLoop},
     application::Application,
-    event::device_event::{
-        ElementState, KeyInput, KeyboardState, MouseInput, MouseLogicalButton, MousePrimaryButton,
-    },
+    event::device_event::{ElementState, KeyInput, KeyboardState},
     window::WindowId,
 };
 
@@ -145,7 +143,9 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
                         dragging_from_primary: None,
                         dragging_from_secondary: None,
                         dragging_from_middle: None,
-                        event: Some(crate::event::device_event::MouseInput::Moved { position: pos }),
+                        event: Some(crate::event::device_event::MouseInput::Moved {
+                            position: pos,
+                        }),
                     },
                 );
                 self.adapter.device_event(event_loop, window_id, e);
@@ -181,7 +181,10 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
                         crate::event::device_event::mouse_input::ScrollDelta::LineDelta(x, y)
                     }
                     winit::event::MouseScrollDelta::PixelDelta(pos) => {
-                        crate::event::device_event::mouse_input::ScrollDelta::PixelDelta([pos.x as f32, pos.y as f32])
+                        crate::event::device_event::mouse_input::ScrollDelta::PixelDelta([
+                            pos.x as f32,
+                            pos.y as f32,
+                        ])
                     }
                 };
                 let e = crate::event::device_event::DeviceEvent::stateless(
@@ -189,7 +192,9 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
                         dragging_from_primary: None,
                         dragging_from_secondary: None,
                         dragging_from_middle: None,
-                        event: Some(crate::event::device_event::MouseInput::ScrollRaw { delta: converted_delta }),
+                        event: Some(crate::event::device_event::MouseInput::ScrollRaw {
+                            delta: converted_delta,
+                        }),
                     },
                 );
                 self.adapter.device_event(event_loop, window_id, e);
@@ -253,7 +258,9 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
 
             winit::event::WindowEvent::ModifiersChanged(modifiers) => {
                 let e = crate::event::device_event::DeviceEvent::stateless(
-                    crate::event::device_event::DeviceEventData::ModifiersChanged(modifiers.state()),
+                    crate::event::device_event::DeviceEventData::ModifiersChanged(
+                        modifiers.state(),
+                    ),
                 );
                 self.adapter.device_event(event_loop, window_id, e);
             }
@@ -275,7 +282,9 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
 
             winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 let e = crate::event::window_event::WindowEvent::stateless(
-                    crate::event::window_event::WindowEventData::ScaleFactorChanged { scale_factor },
+                    crate::event::window_event::WindowEventData::ScaleFactorChanged {
+                        scale_factor,
+                    },
                 );
                 self.adapter.window_event(event_loop, window_id, e);
             }
