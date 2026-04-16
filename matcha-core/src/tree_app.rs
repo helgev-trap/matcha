@@ -211,7 +211,7 @@ impl<C: Component> Application for TreeApp<C> {
     /// Builds the initial widget tree (creates OS windows declared in the view).
     ///
     /// Called by [`Adapter`](crate::adapter::Adapter) immediately after `resumed`.
-    fn create_window(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
+    fn create_surface(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
         let mut inner = self.state.lock();
         inner.run_update(runtime, event_loop, &self.gpu);
     }
@@ -220,7 +220,7 @@ impl<C: Component> Application for TreeApp<C> {
     ///
     /// Dead `Weak` entries in the window registry are pruned on the next
     /// `create_window` / `buffer_updated` call.
-    fn destroy_window(&self, _runtime: &tokio::runtime::Handle, _event_loop: &impl EventLoop) {
+    fn destroy_surface(&self, _runtime: &tokio::runtime::Handle, _event_loop: &impl EventLoop) {
         self.state.lock().widget_pod = None;
     }
 
@@ -276,12 +276,7 @@ impl<C: Component> Application for TreeApp<C> {
     }
 
     /// Routes a device event to the widget tree of the target window.
-    fn device_event(
-        &self,
-        event_loop: &impl EventLoop,
-        window_id: WindowId,
-        event: DeviceEvent,
-    ) {
+    fn device_event(&self, event_loop: &impl EventLoop, window_id: WindowId, event: DeviceEvent) {
         let handle = tokio::runtime::Handle::current();
         let inner = self.state.lock();
 

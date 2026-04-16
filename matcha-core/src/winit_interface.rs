@@ -59,7 +59,7 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
 
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         self.adapter.resumed(event_loop);
-        self.adapter.create_window(event_loop);
+        self.adapter.create_surface(event_loop);
     }
 
     fn window_event(
@@ -327,7 +327,7 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
     }
 
     fn suspended(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        self.adapter.destroy_window(event_loop);
+        self.adapter.destroy_surface(event_loop);
         self.adapter.suspended(event_loop);
     }
 

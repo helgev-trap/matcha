@@ -101,19 +101,19 @@ impl<App: Application> Adapter<App> {
         self.app.resumed(self.tokio_runtime.handle(), event_loop);
     }
 
-    pub fn create_window(&mut self, event_loop: &impl EventLoop) {
+    pub fn create_surface(&mut self, event_loop: &impl EventLoop) {
         let _guard = self.tokio_runtime.enter();
         self.app
-            .create_window(self.tokio_runtime.handle(), event_loop);
+            .create_surface(self.tokio_runtime.handle(), event_loop);
     }
 
-    pub fn destroy_window(&mut self, event_loop: &impl EventLoop) {
+    pub fn destroy_surface(&mut self, event_loop: &impl EventLoop) {
         // ensure all rendering tasks are finished
         self.abort_all_rendering_tasks();
 
         let _guard = self.tokio_runtime.enter();
         self.app
-            .destroy_window(self.tokio_runtime.handle(), event_loop);
+            .destroy_surface(self.tokio_runtime.handle(), event_loop);
     }
 
     pub fn suspended(&mut self, event_loop: &impl EventLoop) {
@@ -127,7 +127,7 @@ impl<App: Application> Adapter<App> {
     }
 }
 
-/// Rendering events
+/// Events
 impl<App: Application> Adapter<App> {
     pub fn render(&mut self, event_loop: &impl EventLoop, window_id: WindowId) {
         if let Some(handle) = self.rendering_window.get(&window_id) {
@@ -146,10 +146,7 @@ impl<App: Application> Adapter<App> {
 
         self.rendering_window.insert(window_id, handle);
     }
-}
 
-/// Window events
-impl<App: Application> Adapter<App> {
     pub fn window_event(
         &mut self,
         event_loop: &impl EventLoop,
@@ -160,10 +157,7 @@ impl<App: Application> Adapter<App> {
         let event = self.window_state_mut(window_id).window.process(event);
         self.app.window_event(event_loop, window_id, event);
     }
-}
 
-/// Window destroyed
-impl<App: Application> Adapter<App> {
     pub fn window_destroyed(&mut self, event_loop: &impl EventLoop, window_id: WindowId) {
         // Clean up the per-window state machine so it doesn't outlive the window.
         self.remove_window_state(window_id);
@@ -173,10 +167,7 @@ impl<App: Application> Adapter<App> {
         let _guard = self.tokio_runtime.enter();
         self.app.window_destroyed(event_loop, window_id);
     }
-}
 
-/// Device event
-impl<App: Application> Adapter<App> {
     pub fn device_event(
         &mut self,
         event_loop: &impl EventLoop,
@@ -188,10 +179,7 @@ impl<App: Application> Adapter<App> {
             self.app.device_event(event_loop, window_id, processed);
         }
     }
-}
 
-/// Raw device event
-impl<App: Application> Adapter<App> {
     pub fn raw_device_event(
         &mut self,
         event_loop: &impl EventLoop,
@@ -201,13 +189,6 @@ impl<App: Application> Adapter<App> {
         let _guard = self.tokio_runtime.enter();
         self.app
             .raw_device_event(event_loop, raw_device_id, raw_event);
-    }
-}
-
-/// Event Loop Commands
-impl<App: Application> Adapter<App> {
-    pub fn event_loop_commands(&self, _cmd: ApplicationCommand) {
-        todo!()
     }
 }
 
@@ -225,7 +206,14 @@ impl<App: Application> Adapter<App> {
     }
 }
 
-/// Polling event
+/// Event Loop Commands
+impl<App: Application> Adapter<App> {
+    pub fn event_loop_commands(&self, _cmd: ApplicationCommand) {
+        todo!()
+    }
+}
+
+/// Polling
 impl<App: Application> Adapter<App> {
     pub fn poll(&mut self, event_loop: &impl EventLoop) {
         let _guard = self.tokio_runtime.enter();
@@ -252,14 +240,14 @@ impl<App: Application> Adapter<App> {
         let _guard = self.tokio_runtime.enter();
         self.app.wait_cancelled(event_loop, start, requested_resume);
     }
-}
 
-impl<App: Application> Adapter<App> {
     pub fn about_to_wait(&self, event_loop: &impl EventLoop) {
         let _guard = self.tokio_runtime.enter();
         self.app.about_to_wait(event_loop);
     }
+}
 
+impl<App: Application> Adapter<App> {
     pub fn memory_warning(&mut self, event_loop: &impl EventLoop) {
         let _guard = self.tokio_runtime.enter();
         self.app.memory_warning(event_loop);

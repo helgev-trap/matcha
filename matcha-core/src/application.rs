@@ -15,8 +15,8 @@ pub trait Application: Send + Sync + 'static {
     // lifecycle methods
     fn init(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
     fn resumed(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
-    fn create_window(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
-    fn destroy_window(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
+    fn create_surface(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
+    fn destroy_surface(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
     fn suspended(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
     fn exiting(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
 
