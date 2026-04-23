@@ -1,5 +1,5 @@
 use crate::{
-    adapter::EventLoop,
+    adapter::{EventLoop, EventLoopProxy},
     event::{
         device_event::DeviceEvent,
         raw_device_event::{RawDeviceEvent, RawDeviceId},
@@ -10,7 +10,10 @@ use crate::{
 
 #[async_trait::async_trait]
 pub trait Application: Send + Sync + 'static {
-    type Msg: Send + 'static;
+    type Command: Send + 'static;
+
+    // setup methods
+    fn set_proxy(&mut self, proxy: &dyn EventLoopProxy<Self>);
 
     // lifecycle methods
     fn init(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
@@ -21,7 +24,7 @@ pub trait Application: Send + Sync + 'static {
     fn exiting(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
 
     // rendering methods — no event_loop, spawnable in parallel
-    async fn render(&self, window_id: WindowId);
+    async fn render(&self, runtime: &tokio::runtime::Handle, window_id: WindowId);
 
     // event methods
     fn window_event(
@@ -44,6 +47,14 @@ pub trait Application: Send + Sync + 'static {
         window_id: WindowId,
         event: DeviceEvent,
     );
+    fn ui_command(
+        &self,
+        runtime: &tokio::runtime::Handle,
+        event_loop: &impl EventLoop,
+        command: Self::Command,
+    );
+
+    // Default Methods
     fn raw_device_event(
         &self,
         runtime: &tokio::runtime::Handle,
@@ -56,15 +67,6 @@ pub trait Application: Send + Sync + 'static {
         let _ = raw_device_id;
         let _ = raw_event;
     }
-    fn buffer_updated(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
-    fn backend_message(
-        &self,
-        runtime: &tokio::runtime::Handle,
-        event_loop: &impl EventLoop,
-        msg: Self::Msg,
-    );
-
-    // Default Methods
     fn poll(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
         let _ = runtime;
         let _ = event_loop;

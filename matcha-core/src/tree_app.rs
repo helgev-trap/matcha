@@ -9,7 +9,7 @@ use dashmap::DashMap;
 use parking_lot::Mutex;
 use std::sync::{Arc, Weak};
 
-use crate::adapter::EventLoop;
+use crate::adapter::{EventLoop, EventLoopProxy};
 use crate::application::Application;
 use crate::event::device_event::DeviceEvent;
 use crate::event::raw_device_event::{RawDeviceEvent, RawDeviceId};
@@ -17,7 +17,8 @@ use crate::event::window_event::WindowEvent;
 use crate::window::WindowId;
 
 use component::{Component, ComponentPod};
-use context::{AppContext, EventReceiver, EventSender, RenderCtx, UiContext};
+use context::{AppContext, EventReceiver, EventSender, SharedCtx, UiContext};
+use gpu_utils::texture_atlas::atlas_simple::atlas::TextureAtlas;
 use widget::{View, WidgetPod, WidgetUpdateError};
 use window::AnyWindowWidgetInstance;
 
@@ -41,18 +42,10 @@ pub struct TreeApp<C: Component> {
     /// holding the state mutex.
     gpu: gpu_utils::gpu::Gpu,
 
-    state: Mutex<TreeAppInner<C>>,
-}
-
-// ----------------------------------------------------------------------------
-// TreeAppInner — the mutable guts, protected by the Mutex above
-// ----------------------------------------------------------------------------
-
-struct TreeAppInner<C: Component> {
     root: ComponentPod<C>,
 
     /// Built widget tree.  `None` until the first `create_window` / `buffer_updated`.
-    widget_pod: Option<WidgetPod>,
+    widget_pod: Mutex<Option<WidgetPod>>,
 
     /// Weak registry keyed by [`WindowId`].
     /// The strong `Arc` lives inside [`WindowWidget`](window::WindowWidget);
@@ -61,6 +54,9 @@ struct TreeAppInner<C: Component> {
 
     event_sender: EventSender,
     event_receiver: EventReceiver,
+
+    /// Shared texture atlas for widget rendering (format: Rgba8UnormSrgb).
+    texture_atlas: std::sync::Arc<TextureAtlas>,
 }
 
 // ----------------------------------------------------------------------------
@@ -70,15 +66,27 @@ struct TreeAppInner<C: Component> {
 impl<C: Component> TreeApp<C> {
     pub fn new(root: C, gpu: gpu_utils::gpu::Gpu) -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let (gpu_device, _) = gpu.context().unwrap();
+        let texture_atlas = TextureAtlas::new(
+            &gpu_device,
+            wgpu::Extent3d {
+                width: 4096,
+                height: 4096,
+                depth_or_array_layers: 4,
+            },
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            TextureAtlas::DEFAULT_MARGIN_PX,
+        );
+
         Self {
             gpu,
-            state: Mutex::new(TreeAppInner {
-                root: ComponentPod::new(None, root),
-                widget_pod: None,
-                window_registry: DashMap::new(),
-                event_sender: EventSender::new(tx),
-                event_receiver: EventReceiver::new(rx),
-            }),
+            root: ComponentPod::new(None, root),
+            widget_pod: Mutex::new(None),
+            window_registry: DashMap::new(),
+            event_sender: EventSender::new(tx),
+            event_receiver: EventReceiver::new(rx),
+            texture_atlas,
         }
     }
 
@@ -87,42 +95,7 @@ impl<C: Component> TreeApp<C> {
     /// The backend holds this `Arc` and writes to
     /// [`SharedValue`](shared_buffer::SharedValue) fields to update UI state.
     pub fn component(&self) -> Arc<C> {
-        self.state.lock().root.arc()
-    }
-}
-
-// ----------------------------------------------------------------------------
-// TreeAppInner helpers — context construction
-// ----------------------------------------------------------------------------
-
-impl<C: Component> TreeAppInner<C> {
-    fn app_ctx<'a>(&'a self, runtime: &'a tokio::runtime::Handle) -> AppContext<'a> {
-        AppContext::new(runtime, &self.event_sender)
-    }
-
-    fn render_ctx<'a>(
-        &'a self,
-        runtime: &'a tokio::runtime::Handle,
-        gpu: &'a gpu_utils::gpu::Gpu,
-    ) -> RenderCtx<'a> {
-        RenderCtx {
-            runtime_handle: runtime,
-            event_sender: &self.event_sender,
-            gpu,
-            window_registry: &self.window_registry,
-        }
-    }
-
-    fn ui_ctx<'a>(
-        &'a self,
-        runtime: &'a tokio::runtime::Handle,
-        event_loop: &'a dyn EventLoop,
-        gpu: &'a gpu_utils::gpu::Gpu,
-    ) -> UiContext<'a> {
-        UiContext {
-            render_ctx: self.render_ctx(runtime, gpu),
-            event_loop,
-        }
+        self.root.arc()
     }
 }
 
@@ -130,48 +103,39 @@ impl<C: Component> TreeAppInner<C> {
 // TreeAppInner core logic
 // ----------------------------------------------------------------------------
 
-impl<C: Component> TreeAppInner<C> {
+impl<C: Component> TreeApp<C> {
     /// Drains pending component messages, rebuilds the view tree, and
     /// reconciles the widget tree.  Prunes dead window registry entries.
     fn run_update(
-        &mut self,
+        &self,
         runtime: &tokio::runtime::Handle,
         event_loop: &dyn EventLoop,
         gpu: &gpu_utils::gpu::Gpu,
     ) {
-        // Collect pending messages before building ctx so that
-        // &mut self.event_receiver and the &self.event_sender borrow inside ctx
-        // do not overlap.
-        let mut msgs: Vec<C::Message> = Vec::new();
-        while let Ok(raw) = self.event_receiver.try_recv() {
-            if let Ok(msg) = raw.downcast::<C::Message>() {
-                msgs.push(*msg);
-            }
-        }
+        let gpu_instance = gpu.instance();
+        let (gpu_device, gpu_queue) = gpu.context().unwrap();
 
-        // Use an explicit struct literal so the borrow checker sees that ctx
-        // borrows only self.event_sender and self.window_registry — not
-        // self.widget_pod or self.root.  This allows the disjoint mutable
-        // access to self.widget_pod below.
-        let ctx = UiContext {
-            render_ctx: RenderCtx {
-                runtime_handle: runtime,
-                event_sender: &self.event_sender,
-                gpu,
-                window_registry: &self.window_registry,
-            },
-            event_loop,
+        let shared = SharedCtx {
+            runtime_handle: runtime,
+            event_sender: &self.event_sender,
+            window_registry: &self.window_registry,
+            gpu_instance,
+            gpu_device,
+            gpu_queue,
+            texture_atlas: self.texture_atlas.as_ref(),
         };
-
-        for msg in msgs {
-            self.root.update(msg, &ctx);
-        }
+        let ctx = UiContext {
+            shared: &shared,
+            event_loop: Some(event_loop),
+            window: None,
+        };
 
         let view = self.root.view(&ctx);
 
-        match &mut self.widget_pod {
+        let mut widget_pod = self.widget_pod.lock();
+        match &mut *widget_pod {
             None => {
-                self.widget_pod = Some(view.build(&ctx));
+                *widget_pod = Some(view.build(&ctx));
             }
             Some(pod) => {
                 if let Err(WidgetUpdateError::TypeMismatch) = pod.try_update(&view, &ctx) {
@@ -192,28 +156,40 @@ impl<C: Component> TreeAppInner<C> {
 
 #[async_trait::async_trait]
 impl<C: Component> Application for TreeApp<C> {
-    type Msg = C::Message;
+    type Command = TreeAppCommand<C::Message>;
+
+    fn set_proxy(&mut self, proxy: &dyn EventLoopProxy<Self>) {
+        todo!()
+    }
 
     // -------------------------------------------------------------------------
     // Lifecycle
     // -------------------------------------------------------------------------
 
-    fn init(&self, runtime: &tokio::runtime::Handle, _event_loop: &impl EventLoop) {
-        let inner = self.state.lock();
-        inner.root.init(&inner.app_ctx(runtime));
+    fn init(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
+        let ctx = AppContext {
+            runtime_handle: runtime,
+            event_sender: &self.event_sender,
+            event_loop: event_loop,
+        };
+
+        self.root.init(&ctx);
     }
 
-    fn resumed(&self, runtime: &tokio::runtime::Handle, _event_loop: &impl EventLoop) {
-        let inner = self.state.lock();
-        inner.root.resumed(&inner.app_ctx(runtime));
+    fn resumed(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
+        let ctx = AppContext {
+            runtime_handle: runtime,
+            event_sender: &self.event_sender,
+            event_loop: event_loop,
+        };
+        self.root.resumed(&ctx);
     }
 
     /// Builds the initial widget tree (creates OS windows declared in the view).
     ///
     /// Called by [`Adapter`](crate::adapter::Adapter) immediately after `resumed`.
     fn create_surface(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
-        let mut inner = self.state.lock();
-        inner.run_update(runtime, event_loop, &self.gpu);
+        self.run_update(runtime, event_loop, &self.gpu);
     }
 
     /// Drops the entire widget tree, which destroys all OS windows via `Arc` ref-counting.
@@ -221,17 +197,25 @@ impl<C: Component> Application for TreeApp<C> {
     /// Dead `Weak` entries in the window registry are pruned on the next
     /// `create_window` / `buffer_updated` call.
     fn destroy_surface(&self, _runtime: &tokio::runtime::Handle, _event_loop: &impl EventLoop) {
-        self.state.lock().widget_pod = None;
+        *self.widget_pod.lock() = None;
     }
 
-    fn suspended(&self, runtime: &tokio::runtime::Handle, _event_loop: &impl EventLoop) {
-        let inner = self.state.lock();
-        inner.root.suspended(&inner.app_ctx(runtime));
+    fn suspended(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
+        let ctx = AppContext {
+            runtime_handle: runtime,
+            event_sender: &self.event_sender,
+            event_loop: event_loop,
+        };
+        self.root.suspended(&ctx);
     }
 
-    fn exiting(&self, runtime: &tokio::runtime::Handle, _event_loop: &impl EventLoop) {
-        let inner = self.state.lock();
-        inner.root.exiting(&inner.app_ctx(runtime));
+    fn exiting(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
+        let ctx = AppContext {
+            runtime_handle: runtime,
+            event_sender: &self.event_sender,
+            event_loop: event_loop,
+        };
+        self.root.exiting(&ctx);
     }
 
     // -------------------------------------------------------------------------
@@ -242,17 +226,31 @@ impl<C: Component> Application for TreeApp<C> {
     /// [`RenderNode`](renderer::RenderNode).
     ///
     /// GPU surface submission is not yet implemented (see TODO below).
-    async fn render(&self, window_id: WindowId) {
-        let handle = tokio::runtime::Handle::current();
-        let inner = self.state.lock();
-
-        let op_arc = inner
+    async fn render(&self, runtime: &tokio::runtime::Handle, window_id: WindowId) {
+        let op_arc = self
             .window_registry
             .get(&window_id)
             .and_then(|w| w.upgrade());
 
         if let Some(arc) = op_arc {
-            let ctx = inner.render_ctx(&handle, &self.gpu);
+            let gpu_instance = self.gpu.instance();
+            let (gpu_device, gpu_queue) = self.gpu.context().unwrap();
+
+            let shared = SharedCtx {
+                runtime_handle: runtime,
+                event_sender: &self.event_sender,
+                window_registry: &self.window_registry,
+                gpu_instance,
+                gpu_device,
+                gpu_queue,
+                texture_atlas: self.texture_atlas.as_ref(),
+            };
+            let ctx = UiContext {
+                shared: &shared,
+                event_loop: None,
+                window: None,
+            };
+
             let mut instance = arc.lock();
             let size = instance.size();
             let _render_node = instance.render(size, &ctx);
@@ -273,7 +271,6 @@ impl<C: Component> Application for TreeApp<C> {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        // TODO
     }
 
     fn window_destroyed(
@@ -294,15 +291,31 @@ impl<C: Component> Application for TreeApp<C> {
         event: DeviceEvent,
     ) {
         let handle = tokio::runtime::Handle::current();
-        let inner = self.state.lock();
 
-        let op_arc = inner
+        let op_arc = self
             .window_registry
             .get(&window_id)
             .and_then(|w| w.upgrade());
 
         if let Some(arc) = op_arc {
-            let ctx = inner.ui_ctx(&handle, event_loop, &self.gpu);
+            let gpu_instance = self.gpu.instance();
+            let (gpu_device, gpu_queue) = self.gpu.context().unwrap();
+
+            let shared = SharedCtx {
+                runtime_handle: runtime,
+                event_sender: &self.event_sender,
+                window_registry: &self.window_registry,
+                gpu_instance,
+                gpu_device,
+                gpu_queue,
+                texture_atlas: self.texture_atlas.as_ref(),
+            };
+            let ctx = UiContext {
+                shared: &shared,
+                event_loop: Some(event_loop),
+                window: None,
+            };
+
             let mut instance = arc.lock();
             instance.device_input(&event, &ctx);
         }
@@ -319,23 +332,45 @@ impl<C: Component> Application for TreeApp<C> {
     }
 
     // -------------------------------------------------------------------------
-    // User events
+    // Ui commands
     // -------------------------------------------------------------------------
 
-    /// Rebuilds the view tree after `SharedValue::store()` signals a change.
-    fn buffer_updated(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
-        let mut inner = self.state.lock();
-        inner.run_update(runtime, event_loop, &self.gpu);
-    }
+    fn ui_command(
+        &self,
+        runtime: &tokio::runtime::Handle,
+        event_loop: &impl EventLoop,
+        command: Self::Command,
+    ) {
+        match command {
+            TreeAppCommand::BufferUpdated => {
+                self.run_update(runtime, event_loop, &self.gpu);
+            }
+            TreeAppCommand::BackendMessage(msg) => {
+                let gpu_instance = self.gpu.instance();
+                let (gpu_device, gpu_queue) = self.gpu.context().unwrap();
 
-    /// Delivers a typed message directly to the root component.
-    ///
-    /// Typically the component will call `SharedValue::store()` in response,
-    /// which triggers a `BufferUpdated` event → `buffer_updated()` → full
-    /// view rebuild.
-    fn backend_message(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop, msg: C::Message) {
-        let inner = self.state.lock();
-        let ctx = inner.ui_ctx(runtime, event_loop, &self.gpu);
-        inner.root.update(msg, &ctx);
+                let shared = SharedCtx {
+                    runtime_handle: runtime,
+                    event_sender: &self.event_sender,
+                    window_registry: &self.window_registry,
+                    gpu_instance,
+                    gpu_device,
+                    gpu_queue,
+                    texture_atlas: self.texture_atlas.as_ref(),
+                };
+                let ctx = UiContext {
+                    shared: &shared,
+                    event_loop: Some(event_loop),
+                    window: None,
+                };
+
+                self.root.update(msg, &ctx);
+            }
+        }
     }
+}
+
+pub enum TreeAppCommand<Msg: Send + 'static> {
+    BufferUpdated,
+    BackendMessage(Msg),
 }

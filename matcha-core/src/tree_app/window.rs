@@ -6,7 +6,7 @@ use renderer::RenderNode;
 use crate::{
     event::device_event::DeviceEvent,
     tree_app::{
-        context::{RenderCtx, UiContext},
+        context::{UiContext, WindowCtx},
         metrics,
         widget::{View, Widget, WidgetInteractionResult, WidgetPod, WidgetUpdateError},
     },
@@ -64,14 +64,8 @@ impl Widget for WindowWidget {
     fn update(&mut self, view: &Window, ctx: &UiContext) -> WidgetInteractionResult {
         // The window already exists; just keep the inner widget in sync.
         // Registration was done in Window::build() and is not repeated here.
-        let mut guard = self.instance.lock();
-        match guard.widget.try_update(view.view.as_ref(), ctx) {
-            Ok(result) => result,
-            Err(WidgetUpdateError::TypeMismatch) => {
-                guard.widget = view.view.build(ctx);
-                WidgetInteractionResult::LayoutNeeded
-            }
-        }
+        let mut instance = self.instance.lock();
+        instance.try_update(view, &ctx)
     }
 
     fn device_input(
@@ -89,7 +83,7 @@ impl Widget for WindowWidget {
         [0.0, 0.0]
     }
 
-    fn render(&mut self, _bounds: [f32; 2], _ctx: &RenderCtx) -> RenderNode {
+    fn render(&mut self, _bounds: [f32; 2], _ctx: &UiContext) -> RenderNode {
         // Nothing to render in the parent tree; the window draws to its own surface.
         RenderNode::new()
     }
@@ -119,6 +113,31 @@ impl WindowWidgetInstance {
             widget,
         }
     }
+
+    pub fn try_update(&mut self, view: &Window, ctx: &UiContext) -> WidgetInteractionResult {
+        let window_ctx = WindowCtx {
+            dpi: self.window.dpi(),
+            format: self.window.format(),
+            config: self.window.config().clone(),
+            inner_size: self
+                .window
+                .inner_size()
+                .map(|s| [s[0] as f32, s[1] as f32])
+                .unwrap_or([0.0, 0.0]),
+        };
+        let ctx = UiContext {
+            event_loop: ctx.event_loop,
+            shared: ctx.shared,
+            window: Some(&window_ctx),
+        };
+        match self.widget.try_update(view.view.as_ref(), &ctx) {
+            Ok(result) => result,
+            Err(WidgetUpdateError::TypeMismatch) => {
+                self.widget = view.view.build(&ctx);
+                WidgetInteractionResult::LayoutNeeded
+            }
+        }
+    }
 }
 
 // -------------------------
@@ -136,7 +155,7 @@ pub trait AnyWindowWidgetInstance: Send + Sync {
     fn window_id(&self) -> WindowId;
     fn size(&self) -> [f32; 2];
     fn device_input(&mut self, event: &DeviceEvent, ctx: &UiContext) -> WidgetInteractionResult;
-    fn render(&mut self, bounds: [f32; 2], ctx: &RenderCtx) -> RenderNode;
+    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode;
     fn measure(&self, constraints: &metrics::Constraints, ctx: &UiContext) -> [f32; 2];
 }
 
@@ -153,15 +172,60 @@ impl AnyWindowWidgetInstance for WindowWidgetInstance {
     }
 
     fn device_input(&mut self, event: &DeviceEvent, ctx: &UiContext) -> WidgetInteractionResult {
+        let window_ctx = WindowCtx {
+            dpi: self.window.dpi(),
+            format: self.window.format(),
+            config: self.window.config().clone(),
+            inner_size: self
+                .window
+                .inner_size()
+                .map(|s| [s[0] as f32, s[1] as f32])
+                .unwrap_or([0.0, 0.0]),
+        };
+        let ctx = UiContext {
+            event_loop: ctx.event_loop,
+            shared: ctx.shared,
+            window: Some(&window_ctx),
+        };
         let bounds = self.size();
-        self.widget.device_input(bounds, event, ctx)
+        self.widget.device_input(bounds, event, &ctx)
     }
 
-    fn render(&mut self, bounds: [f32; 2], ctx: &RenderCtx) -> RenderNode {
-        self.widget.render(bounds, ctx)
+    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode {
+        let window_ctx = WindowCtx {
+            dpi: self.window.dpi(),
+            format: self.window.format(),
+            config: self.window.config().clone(),
+            inner_size: self
+                .window
+                .inner_size()
+                .map(|s| [s[0] as f32, s[1] as f32])
+                .unwrap_or([0.0, 0.0]),
+        };
+        let ctx = UiContext {
+            event_loop: ctx.event_loop,
+            shared: ctx.shared,
+            window: Some(&window_ctx),
+        };
+        self.widget.render(bounds, &ctx)
     }
 
     fn measure(&self, constraints: &metrics::Constraints, ctx: &UiContext) -> [f32; 2] {
-        self.widget.measure(constraints, ctx)
+        let window_ctx = WindowCtx {
+            dpi: self.window.dpi(),
+            format: self.window.format(),
+            config: self.window.config().clone(),
+            inner_size: self
+                .window
+                .inner_size()
+                .map(|s| [s[0] as f32, s[1] as f32])
+                .unwrap_or([0.0, 0.0]),
+        };
+        let ctx = UiContext {
+            event_loop: ctx.event_loop,
+            shared: ctx.shared,
+            window: Some(&window_ctx),
+        };
+        self.widget.measure(constraints, &ctx)
     }
 }

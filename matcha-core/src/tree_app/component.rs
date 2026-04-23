@@ -4,12 +4,12 @@ use renderer::RenderNode;
 
 use super::widget::{View, Widget, WidgetInteractionResult, WidgetPod};
 use crate::{
-    event::device_event::DeviceEvent,
+    event::{device_event::DeviceEvent, window_event::WindowEvent},
     tree_app::{
-        context::{AppContext, RenderCtx, UiContext},
+        context::{AppContext, UiContext},
         metrics,
         widget::WidgetUpdateError,
-    },
+    }, window::WindowId,
 };
 
 // ----------------------------------------------------------------------------
@@ -61,6 +61,15 @@ pub trait Component: Send + Sync + 'static {
 
     /// Called when the application is exiting.
     fn exiting(&self, ctx: &AppContext);
+
+    // -----------------
+    // Window Event Handling
+    // -----------------
+
+    /// Called for every window event.
+    fn window_event(&self, window_id: WindowId, event: WindowEvent, ctx: &AppContext) {
+        // TODO: Prepare a default implementation to exit on close request.
+    }
 
     // -----------------
     // Update methods
@@ -207,7 +216,7 @@ impl<C: Component> Widget for ComponentWidget<C> {
         self.inner_widget.measure(constraints, ctx)
     }
 
-    fn render(&mut self, bounds: [f32; 2], ctx: &RenderCtx) -> RenderNode {
+    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode {
         self.inner_widget.render(bounds, ctx)
     }
 }

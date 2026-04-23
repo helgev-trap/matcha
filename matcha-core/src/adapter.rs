@@ -50,14 +50,8 @@ pub struct Adapter<App: Application> {
     app: Arc<App>,
 }
 
-/// Construction and running
+/// Construction
 impl<App: Application> Adapter<App> {
-    /// Run the application on the winit event loop.
-    #[cfg(feature = "winit")]
-    pub fn run_on_winit(self) -> Result<(), winit::error::EventLoopError> {
-        crate::winit_interface::run_on_winit(self)
-    }
-
     pub fn new(app: App) -> Self {
         Self::with_tokio_runtime(app, tokio::runtime::Runtime::new().unwrap())
     }
@@ -85,6 +79,31 @@ impl<App: Application> Adapter<App> {
             window_states: HashMap::new(),
             event_config,
             app: Arc::new(app),
+        }
+    }
+}
+
+/// Running and setup
+impl<App: Application> Adapter<App> {
+    #[cfg(feature = "winit")]
+    pub fn run(self) -> Result<(), winit::error::EventLoopError> {
+        crate::winit_interface::run(self)
+    }
+
+    #[cfg(feature = "baseview")]
+    pub fn run(self) -> () {
+        unimplemented!("baseview support is not implemented yet")
+    }
+
+    pub(crate) fn set_proxy(&mut self, proxy: &impl EventLoopProxy<App>) {
+        self.abort_all_rendering_tasks();
+
+        if let Some(app) = Arc::get_mut(&mut self.app) {
+            app.set_proxy(proxy);
+        } else {
+            unreachable!(
+                "This is unreached because all rendering tasks which had other references should have been aborted and awaited."
+            );
         }
     }
 }
@@ -129,7 +148,7 @@ impl<App: Application> Adapter<App> {
 
 /// Events
 impl<App: Application> Adapter<App> {
-    pub fn render(&mut self, event_loop: &impl EventLoop, window_id: WindowId) {
+    pub fn render(&mut self, window_id: WindowId) {
         if let Some(handle) = self.rendering_window.get(&window_id) {
             if handle.is_finished() {
                 self.rendering_window.remove(&window_id);
@@ -139,9 +158,11 @@ impl<App: Application> Adapter<App> {
         }
 
         let app = self.app.clone();
+        let runtime_handle = self.tokio_runtime.handle().clone();
 
         let handle = self.tokio_runtime.spawn(async move {
-            app.render(window_id).await;
+            let handle = runtime_handle;
+            app.render(&handle, window_id).await;
         });
 
         self.rendering_window.insert(window_id, handle);
@@ -203,28 +224,15 @@ impl<App: Application> Adapter<App> {
     }
 }
 
-/// User event
+/// Ui commands
 impl<App: Application> Adapter<App> {
-    /// Called when a `BufferUpdated` event is received from the bridge thread.
-    pub fn buffer_updated(&mut self, event_loop: &impl EventLoop) {
+    pub fn ui_command(&mut self, event_loop: &impl EventLoop, command: App::Command) {
         let _guard = self.tokio_runtime.enter();
         self.app
-            .buffer_updated(self.tokio_runtime.handle(), event_loop);
-    }
-
-    pub fn backend_message(&mut self, event_loop: &impl EventLoop, msg: App::Msg) {
-        let _guard = self.tokio_runtime.enter();
-        self.app
-            .backend_message(self.tokio_runtime.handle(), event_loop, msg);
+            .ui_command(self.tokio_runtime.handle(), event_loop, command);
     }
 }
 
-/// Event Loop Commands
-impl<App: Application> Adapter<App> {
-    pub fn event_loop_commands(&self, _cmd: ApplicationCommand) {
-        todo!()
-    }
-}
 
 /// Polling
 impl<App: Application> Adapter<App> {
@@ -324,10 +332,31 @@ impl<App: Application> Adapter<App> {
 // API type definition
 // -------------------
 
-pub trait EventLoop: crate::window::WindowControler {}
+pub trait EventLoop: crate::window::WindowControler {
+    // `create_window` is inherited from `WindowControler` trait
+    // Todo: fn create_custom_cursor(&self);
+    // Todo: fn available_monitors(&self);
+    // Todo: fn primary_monitor(&self);
+    // Todo: fn listen_device_events
 
-pub enum ApplicationCommand {
-    Exit,
+    fn control_flow(&self) -> ControlFlow;
+    fn exiting(&self) -> bool;
 }
 
-pub trait EventLoopProxy {}
+pub enum EventLoopCommand {
+    Exit,
+    SetControlFlow(ControlFlow),
+}
+
+pub enum ControlFlow {
+    Wait,
+    Poll,
+    WaitUntil(std::time::Instant),
+}
+
+pub trait EventLoopProxy<App: Application> {
+    fn clone(&self) -> Box<dyn EventLoopProxy<App>>;
+    fn send_command(&self, command: App::Command);
+    fn request_exit(&self);
+    fn request_control_flow(&self, control_flow: ControlFlow);
+}

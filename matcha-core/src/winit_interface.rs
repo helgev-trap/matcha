@@ -1,5 +1,5 @@
 use crate::{
-    adapter::{Adapter, ApplicationCommand, EventLoop},
+    adapter::{Adapter, ControlFlow, EventLoop, EventLoopCommand, EventLoopProxy},
     application::Application,
     event::device_event::{ElementState, KeyInput, KeyboardState},
     window::WindowId,
@@ -10,20 +10,36 @@ use crate::{
 // ---------------------------------------------------------------------------
 
 pub(crate) struct WinitInterface<App: Application> {
-    pub(crate) adapter: Adapter<App>,
+    adapter: Adapter<App>,
+    event_loop_proxy: winit::event_loop::EventLoopProxy<WinitUserMessage<App>>,
 }
 
-impl<App: Application> WinitInterface<App> {
-    pub fn new(adapter: Adapter<App>) -> Self {
-        Self { adapter }
-    }
+// ---------------------------------------------------------------------------
+// run_on_winit entry point
+// ---------------------------------------------------------------------------
+
+pub(crate) fn run<App: Application>(
+    mut adapter: Adapter<App>,
+) -> Result<(), winit::error::EventLoopError> {
+    let event_loop =
+        winit::event_loop::EventLoop::<WinitUserMessage<App>>::with_user_event().build()?;
+
+    let event_loop_proxy = event_loop.create_proxy();
+
+    adapter.set_proxy(&event_loop_proxy);
+
+    let mut interface = WinitInterface {
+        adapter,
+        event_loop_proxy,
+    };
+    event_loop.run_app(&mut interface)
 }
 
 // ---------------------------------------------------------------------------
 // winit::application::ApplicationHandler impl
 // ---------------------------------------------------------------------------
 
-impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<App::Msg>>
+impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<App>>
     for WinitInterface<App>
 {
     fn new_events(
@@ -73,16 +89,14 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
             // Redraw request
             // --------------
             winit::event::WindowEvent::RedrawRequested => {
-                self.adapter.render(event_loop, window_id);
+                self.adapter.render(window_id);
             }
 
             // --------------
             // Window lifecycle
             // --------------
             winit::event::WindowEvent::CloseRequested => {
-                let e = crate::event::window_event::WindowEvent::stateless(
-                    crate::event::window_event::WindowEventData::CloseRequested,
-                );
+                let e = crate::event::window_event::WindowEvent::CloseRequested;
                 self.adapter.window_event(event_loop, window_id, e);
             }
 
@@ -91,9 +105,7 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
             }
 
             winit::event::WindowEvent::Occluded(occluded) => {
-                let e = crate::event::window_event::WindowEvent::stateless(
-                    crate::event::window_event::WindowEventData::Occluded(occluded),
-                );
+                let e = crate::event::window_event::WindowEvent::Occluded(occluded);
                 self.adapter.window_event(event_loop, window_id, e);
             }
 
@@ -106,30 +118,24 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
             // --------------
             winit::event::WindowEvent::Resized(physical_size) => {
                 let inner = [physical_size.width as f32, physical_size.height as f32];
-                let e = crate::event::window_event::WindowEvent::stateless(
-                    crate::event::window_event::WindowEventData::Resized {
-                        inner_size: inner,
-                        outer_size: inner,
-                    },
-                );
+                let e = crate::event::window_event::WindowEvent::Resized {
+                    inner_size: inner,
+                    outer_size: inner,
+                };
                 self.adapter.window_event(event_loop, window_id, e);
             }
 
             winit::event::WindowEvent::Moved(physical_position) => {
                 let pos = [physical_position.x as f32, physical_position.y as f32];
-                let e = crate::event::window_event::WindowEvent::stateless(
-                    crate::event::window_event::WindowEventData::Moved {
-                        inner_position: pos,
-                        outer_position: pos,
-                    },
-                );
+                let e = crate::event::window_event::WindowEvent::Moved {
+                    inner_position: pos,
+                    outer_position: pos,
+                };
                 self.adapter.window_event(event_loop, window_id, e);
             }
 
             winit::event::WindowEvent::Focused(focused) => {
-                let e = crate::event::window_event::WindowEvent::stateless(
-                    crate::event::window_event::WindowEventData::Focus(focused),
-                );
+                let e = crate::event::window_event::WindowEvent::Focus(focused);
                 self.adapter.window_event(event_loop, window_id, e);
             }
 
@@ -274,18 +280,13 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
             // --------------
             winit::event::WindowEvent::ThemeChanged(theme) => {
                 let custom_theme = crate::window::window_config::Theme::from(theme);
-                let e = crate::event::window_event::WindowEvent::stateless(
-                    crate::event::window_event::WindowEventData::Theme(custom_theme),
-                );
+                let e = crate::event::window_event::WindowEvent::Theme(custom_theme);
                 self.adapter.window_event(event_loop, window_id, e);
             }
 
             winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                let e = crate::event::window_event::WindowEvent::stateless(
-                    crate::event::window_event::WindowEventData::ScaleFactorChanged {
-                        scale_factor,
-                    },
-                );
+                let e =
+                    crate::event::window_event::WindowEvent::ScaleFactorChanged { scale_factor };
                 self.adapter.window_event(event_loop, window_id, e);
             }
 
@@ -307,18 +308,18 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
     fn user_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
-        event: WinitUserMessage<App::Msg>,
+        event: WinitUserMessage<App>,
     ) {
         match event {
-            WinitUserMessage::BackendMessage { msg } => {
-                self.adapter.backend_message(event_loop, msg);
+            WinitUserMessage::AppCommand { command } => {
+                self.adapter.ui_command(event_loop, command);
             }
-            WinitUserMessage::EventLoopCommand { cmd } => {
-                self.adapter.event_loop_commands(cmd);
-            }
-            WinitUserMessage::BufferUpdated => {
-                self.adapter.buffer_updated(event_loop);
-            }
+            WinitUserMessage::EventLoopCommand { cmd } => match cmd {
+                EventLoopCommand::Exit => event_loop.exit(),
+                EventLoopCommand::SetControlFlow(cf) => {
+                    event_loop.set_control_flow(cf.into());
+                }
+            },
         }
     }
 
@@ -353,64 +354,48 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
 // User message type
 // ---------------------------------------------------------------------------
 
-pub(crate) enum WinitUserMessage<Msg: Send + 'static> {
-    BufferUpdated,
-    BackendMessage { msg: Msg },
-    EventLoopCommand { cmd: ApplicationCommand },
+pub(crate) enum WinitUserMessage<App: Application> {
+    AppCommand { command: App::Command },
+    EventLoopCommand { cmd: EventLoopCommand },
 }
 
 // ---------------------------------------------------------------------------
-// EventLoop / WindowControler impls for winit types
+// Trait impls for winit types
 // ---------------------------------------------------------------------------
 
-impl EventLoop for winit::event_loop::ActiveEventLoop {}
+impl EventLoop for winit::event_loop::ActiveEventLoop {
+    fn control_flow(&self) -> ControlFlow {
+        self.control_flow().into()
+    }
 
-impl crate::adapter::EventLoopProxy for winit::event_loop::EventLoopProxy<()> {}
-
-// ---------------------------------------------------------------------------
-// run_on_winit entry point
-// ---------------------------------------------------------------------------
-
-pub(crate) fn run_on_winit<App: Application>(
-    adapter: Adapter<App>,
-) -> Result<(), winit::error::EventLoopError> {
-    let event_loop =
-        winit::event_loop::EventLoop::<WinitUserMessage<App::Msg>>::with_user_event().build()?;
-
-    // Spawn the bridge thread that forwards SharedValue change signals to the
-    // event loop as `BufferUpdated` messages.  This is what makes
-    // `SharedValue::store()` → redraw work.
-    let proxy = event_loop.create_proxy();
-    spawn_bridge_thread(proxy);
-
-    let mut interface = WinitInterface::new(adapter);
-    event_loop.run_app(&mut interface)
+    fn exiting(&self) -> bool {
+        self.exiting()
+    }
 }
 
-/// Spawns a background thread that watches for [`shared_buffer::SharedValue`]
-/// change signals and forwards them to the winit event loop.
-///
-/// The bridge thread blocks on [`BufferContext::wait_for_signal`] and sends a
-/// `BufferUpdated` user event for every signal, waking the event loop from
-/// `ControlFlow::Wait`.  The thread exits automatically when all senders are
-/// dropped (i.e. when the event loop shuts down).
-fn spawn_bridge_thread<Msg: Send + 'static>(
-    proxy: winit::event_loop::EventLoopProxy<WinitUserMessage<Msg>>,
-) {
-    shared_buffer::BufferContext::init_global();
-    let ctx = shared_buffer::BufferContext::global().clone();
+impl<App: Application> EventLoopProxy<App>
+    for winit::event_loop::EventLoopProxy<WinitUserMessage<App>>
+{
+    fn clone(&self) -> Box<dyn EventLoopProxy<App>> {
+        let proxy = Clone::clone(self);
+        Box::new(proxy)
+    }
 
-    std::thread::Builder::new()
-        .name("matcha-buffer-bridge".into())
-        .spawn(move || {
-            while ctx.wait_for_signal() {
-                // If the event loop is gone the send fails; we exit the loop.
-                if proxy.send_event(WinitUserMessage::BufferUpdated).is_err() {
-                    break;
-                }
-            }
-        })
-        .expect("failed to spawn buffer bridge thread");
+    fn send_command(&self, command: App::Command) {
+        let _ = self.send_event(WinitUserMessage::AppCommand { command });
+    }
+
+    fn request_exit(&self) {
+        let _ = self.send_event(WinitUserMessage::EventLoopCommand {
+            cmd: EventLoopCommand::Exit,
+        });
+    }
+
+    fn request_control_flow(&self, control_flow: ControlFlow) {
+        let _ = self.send_event(WinitUserMessage::EventLoopCommand {
+            cmd: EventLoopCommand::SetControlFlow(control_flow),
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -445,5 +430,33 @@ fn map_key_input(key_event: winit::event::KeyEvent) -> KeyInput {
         state,
         repeat: key_event.repeat,
         snapshot: KeyboardState::default(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Type mapping
+// ---------------------------------------------------------------------------
+
+impl From<crate::adapter::ControlFlow> for winit::event_loop::ControlFlow {
+    fn from(control_flow: crate::adapter::ControlFlow) -> Self {
+        match control_flow {
+            crate::adapter::ControlFlow::Wait => winit::event_loop::ControlFlow::Wait,
+            crate::adapter::ControlFlow::Poll => winit::event_loop::ControlFlow::Poll,
+            crate::adapter::ControlFlow::WaitUntil(instant) => {
+                winit::event_loop::ControlFlow::WaitUntil(instant)
+            }
+        }
+    }
+}
+
+impl From<winit::event_loop::ControlFlow> for crate::adapter::ControlFlow {
+    fn from(control_flow: winit::event_loop::ControlFlow) -> Self {
+        match control_flow {
+            winit::event_loop::ControlFlow::Wait => crate::adapter::ControlFlow::Wait,
+            winit::event_loop::ControlFlow::Poll => crate::adapter::ControlFlow::Poll,
+            winit::event_loop::ControlFlow::WaitUntil(instant) => {
+                crate::adapter::ControlFlow::WaitUntil(instant)
+            }
+        }
     }
 }

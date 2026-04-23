@@ -3,7 +3,7 @@ use std::any::Any;
 use renderer::render_node::RenderNode;
 
 use super::metrics;
-use crate::tree_app::context::{RenderCtx, UiContext};
+use crate::tree_app::context::UiContext;
 use crate::event::device_event::DeviceEvent;
 
 // ----------------------------------------------------------------------------
@@ -56,7 +56,7 @@ pub trait Widget: Send + Sync + Any {
 
     fn measure(&self, constraints: &metrics::Constraints, ctx: &UiContext) -> [f32; 2];
 
-    fn render(&mut self, bounds: [f32; 2], ctx: &RenderCtx) -> RenderNode;
+    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode;
 }
 
 /// Wrapper trait to erase the concrete Widget type.
@@ -78,7 +78,7 @@ pub(super) trait AnyWidget: Send + Sync + Any {
 
     fn measure(&self, constraints: &metrics::Constraints, ctx: &UiContext) -> [f32; 2];
 
-    fn render(&mut self, bounds: [f32; 2], ctx: &RenderCtx) -> RenderNode;
+    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode;
 }
 
 impl<W, V> AnyWidget for W
@@ -115,7 +115,7 @@ where
         Widget::measure(self, constraints, ctx)
     }
 
-    fn render(&mut self, bounds: [f32; 2], ctx: &RenderCtx) -> RenderNode {
+    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode {
         Widget::render(self, bounds, ctx)
     }
 }
@@ -203,7 +203,7 @@ impl WidgetPod {
         self.widget.measure(constraints, ctx)
     }
 
-    pub fn render(&mut self, bounds: [f32; 2], ctx: &RenderCtx) -> RenderNode {
+    pub fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode {
         if let Some(render_node) = &self.render_cache {
             return render_node.clone();
         }
