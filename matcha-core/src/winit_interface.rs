@@ -19,14 +19,12 @@ pub(crate) struct WinitInterface<App: Application> {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn run<App: Application>(
-    mut adapter: Adapter<App>,
+    adapter: Adapter<App>,
 ) -> Result<(), winit::error::EventLoopError> {
     let event_loop =
         winit::event_loop::EventLoop::<WinitUserMessage<App>>::with_user_event().build()?;
 
     let event_loop_proxy = event_loop.create_proxy();
-
-    adapter.set_proxy(&event_loop_proxy);
 
     let mut interface = WinitInterface {
         adapter,
@@ -49,7 +47,7 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
     ) {
         match cause {
             winit::event::StartCause::Init => {
-                self.adapter.init(event_loop);
+                self.adapter.init(self.event_loop_proxy.clone_box(), event_loop);
             }
             winit::event::StartCause::Poll => {
                 self.adapter.poll(event_loop);
@@ -376,9 +374,8 @@ impl EventLoop for winit::event_loop::ActiveEventLoop {
 impl<App: Application> EventLoopProxy<App>
     for winit::event_loop::EventLoopProxy<WinitUserMessage<App>>
 {
-    fn clone(&self) -> Box<dyn EventLoopProxy<App>> {
-        let proxy = Clone::clone(self);
-        Box::new(proxy)
+    fn clone_box(&self) -> Box<dyn EventLoopProxy<App> + Send> {
+        Box::new(Clone::clone(self))
     }
 
     fn send_command(&self, command: App::Command) {

@@ -7,7 +7,7 @@ pub mod window;
 
 use dashmap::DashMap;
 use parking_lot::Mutex;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 
 use crate::adapter::{EventLoop, EventLoopProxy};
 use crate::application::Application;
@@ -19,6 +19,7 @@ use crate::window::WindowId;
 use component::{Component, ComponentPod};
 use context::{AppContext, EventReceiver, EventSender, SharedCtx, UiContext};
 use gpu_utils::texture_atlas::atlas_simple::atlas::TextureAtlas;
+use shared_buffer::BufferContext;
 use widget::{View, WidgetPod, WidgetUpdateError};
 use window::AnyWindowWidgetInstance;
 
@@ -53,7 +54,15 @@ pub struct TreeApp<C: Component> {
     window_registry: DashMap<WindowId, Weak<Mutex<dyn AnyWindowWidgetInstance>>>,
 
     event_sender: EventSender,
-    event_receiver: EventReceiver,
+
+    /// Receiver end of the backend message channel.
+    /// Wrapped in `Mutex<Option<>>` solely to satisfy `Sync` (`UnboundedReceiver: !Sync`).
+    /// Extracted once in `init()` via `Mutex::get_mut()` — no runtime locking occurs.
+    event_receiver: Mutex<Option<EventReceiver>>,
+
+    /// Handle to the bridge task spawned in `init()`.
+    /// Set once; `OnceLock` provides `Sync` without a runtime mutex.
+    bridge_handle: OnceLock<tokio::task::JoinHandle<()>>,
 
     /// Shared texture atlas for widget rendering (format: Rgba8UnormSrgb).
     texture_atlas: std::sync::Arc<TextureAtlas>,
@@ -85,7 +94,8 @@ impl<C: Component> TreeApp<C> {
             widget_pod: Mutex::new(None),
             window_registry: DashMap::new(),
             event_sender: EventSender::new(tx),
-            event_receiver: EventReceiver::new(rx),
+            event_receiver: Mutex::new(Some(EventReceiver::new(rx))),
+            bridge_handle: OnceLock::new(),
             texture_atlas,
         }
     }
@@ -158,21 +168,50 @@ impl<C: Component> TreeApp<C> {
 impl<C: Component> Application for TreeApp<C> {
     type Command = TreeAppCommand<C::Message>;
 
-    fn set_proxy(&mut self, proxy: &dyn EventLoopProxy<Self>) {
-        todo!()
-    }
-
     // -------------------------------------------------------------------------
     // Lifecycle
     // -------------------------------------------------------------------------
 
-    fn init(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
+    fn init(
+        &mut self,
+        runtime: &tokio::runtime::Handle,
+        proxy: Box<dyn EventLoopProxy<Self> + Send>,
+        event_loop: &impl EventLoop,
+    ) {
+        // Extract the receiver without locking — safe because `init` has `&mut self`.
+        let mut receiver = self
+            .event_receiver
+            .get_mut()
+            .take()
+            .expect("TreeApp::init called more than once");
+
+        let buffer_ctx = BufferContext::global().clone();
+
+        let handle = runtime.spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = buffer_ctx.notified() => {
+                        proxy.send_command(TreeAppCommand::BufferUpdated);
+                    }
+                    msg = receiver.recv() => match msg {
+                        Some(boxed) => {
+                            if let Ok(m) = boxed.downcast::<C::Message>() {
+                                proxy.send_command(TreeAppCommand::BackendMessage(*m));
+                            }
+                        }
+                        None => break,
+                    }
+                }
+            }
+        });
+
+        self.bridge_handle.set(handle).ok();
+
         let ctx = AppContext {
             runtime_handle: runtime,
             event_sender: &self.event_sender,
-            event_loop: event_loop,
+            event_loop,
         };
-
         self.root.init(&ctx);
     }
 

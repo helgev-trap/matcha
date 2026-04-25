@@ -94,25 +94,19 @@ impl<App: Application> Adapter<App> {
     pub fn run(self) -> () {
         unimplemented!("baseview support is not implemented yet")
     }
-
-    pub(crate) fn set_proxy(&mut self, proxy: &impl EventLoopProxy<App>) {
-        self.abort_all_rendering_tasks();
-
-        if let Some(app) = Arc::get_mut(&mut self.app) {
-            app.set_proxy(proxy);
-        } else {
-            unreachable!(
-                "This is unreached because all rendering tasks which had other references should have been aborted and awaited."
-            );
-        }
-    }
 }
 
 /// Lifecycle events
 impl<App: Application> Adapter<App> {
-    pub fn init(&mut self, event_loop: &impl EventLoop) {
+    /// Called exactly once at `StartCause::Init`.
+    ///
+    /// `Arc::get_mut` is guaranteed to succeed here because no rendering tasks
+    /// have been spawned yet and no other `Arc` clones exist.
+    pub fn init(&mut self, proxy: Box<dyn EventLoopProxy<App> + Send>, event_loop: &impl EventLoop) {
+        let app = Arc::get_mut(&mut self.app)
+            .expect("Adapter::init must be called before any Arc clones are created");
         let _guard = self.tokio_runtime.enter();
-        self.app.init(self.tokio_runtime.handle(), event_loop);
+        app.init(self.tokio_runtime.handle(), proxy, event_loop);
     }
 
     pub fn resumed(&mut self, event_loop: &impl EventLoop) {
@@ -354,8 +348,8 @@ pub enum ControlFlow {
     WaitUntil(std::time::Instant),
 }
 
-pub trait EventLoopProxy<App: Application> {
-    fn clone(&self) -> Box<dyn EventLoopProxy<App>>;
+pub trait EventLoopProxy<App: Application>: Send {
+    fn clone_box(&self) -> Box<dyn EventLoopProxy<App> + Send>;
     fn send_command(&self, command: App::Command);
     fn request_exit(&self);
     fn request_control_flow(&self, control_flow: ControlFlow);

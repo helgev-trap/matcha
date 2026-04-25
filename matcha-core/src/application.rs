@@ -12,11 +12,13 @@ use crate::{
 pub trait Application: Send + Sync + 'static {
     type Command: Send + 'static;
 
-    // setup methods
-    fn set_proxy(&mut self, proxy: &dyn EventLoopProxy<Self>);
-
     // lifecycle methods
-    fn init(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
+    fn init(
+        &mut self,
+        runtime: &tokio::runtime::Handle,
+        proxy: Box<dyn EventLoopProxy<Self> + Send>,
+        event_loop: &impl EventLoop,
+    );
     fn resumed(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
     fn create_surface(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);
     fn destroy_surface(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop);

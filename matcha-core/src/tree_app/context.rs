@@ -46,6 +46,10 @@ impl EventReceiver {
     ) -> Result<Box<dyn Any + Send>, tokio::sync::mpsc::error::TryRecvError> {
         self.receiver.try_recv()
     }
+
+    pub(super) async fn recv(&mut self) -> Option<Box<dyn Any + Send>> {
+        self.receiver.recv().await
+    }
 }
 
 // ----------------------------------------------------------------------------
