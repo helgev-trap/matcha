@@ -1,8 +1,11 @@
 use std::num::NonZeroUsize;
 
 use gpu_utils::texture_atlas::atlas_simple::atlas::AtlasRegion;
-use matcha_core::metrics::{Constraints, QSize};
-use matcha_core::{color::Color, context::WidgetContext};
+use matcha_core::tree_app::{
+    context::UiContext,
+    metrics::{Constraints, QSize},
+};
+use matcha_core::{color::Color, tree_app::metrics::QRect};
 
 use suzuri::font_system::FontSystem;
 use suzuri::renderer::gpu_renderer::GpuCacheConfig;
@@ -83,7 +86,7 @@ struct TextShared {
 }
 
 impl TextShared {
-    fn setup(device: &wgpu::Device, _: &wgpu::Queue) -> Self {
+    fn setup(device: &wgpu::Device, _queue: &wgpu::Queue) -> Self {
         let font_system = FontSystem::new();
 
         font_system.load_system_fonts();
@@ -129,6 +132,8 @@ pub struct TextRenderer {
     layout_config: suzuri::text::TextLayoutConfig,
     layout_cache: RwCache<Constraints, suzuri::text::TextLayout<[f32; 4]>>,
     texture_cache: RwCache<QSize, wgpu::Texture>,
+    text_shared: RwOption<TextShared>,
+    texture_copy: renderer::texture_copy::TextureCopy,
 }
 
 impl PartialEq for TextRenderer {
@@ -145,6 +150,8 @@ impl Clone for TextRenderer {
             layout_config: self.layout_config.clone(),
             layout_cache: RwCache::new(),
             texture_cache: RwCache::new(),
+            text_shared: RwOption::new(),
+            texture_copy: renderer::texture_copy::TextureCopy::default(),
         }
     }
 }
@@ -163,6 +170,8 @@ impl TextRenderer {
             layout_config: suzuri::text::TextLayoutConfig::default(),
             layout_cache: RwCache::new(),
             texture_cache: RwCache::new(),
+            text_shared: RwOption::new(),
+            texture_copy: renderer::texture_copy::TextureCopy::default(),
         }
     }
 
@@ -252,10 +261,8 @@ impl TextRenderer {
         text_layout: &suzuri::text::TextLayout<[f32; 4]>,
         font_system: &FontSystem,
         encoder: &mut wgpu::CommandEncoder,
-        ctx: &WidgetContext,
+        device: &wgpu::Device,
     ) -> wgpu::Texture {
-        let device = &ctx.device();
-
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Text Texture"),
             size: wgpu::Extent3d {
@@ -282,12 +289,12 @@ impl TextRenderer {
 impl crate::style::Style for TextRenderer {
     fn required_region(
         &self,
-        constraints: &matcha_core::metrics::Constraints,
-        ctx: &WidgetContext,
-    ) -> Option<matcha_core::metrics::QRect> {
-        let shared = ctx
-            .any_resource()
-            .get_or_insert_with(|| TextShared::setup(&ctx.device(), &ctx.queue()));
+        constraints: &matcha_core::tree_app::metrics::Constraints,
+        ctx: &UiContext,
+    ) -> Option<matcha_core::tree_app::metrics::QRect> {
+        let shared = self
+            .text_shared
+            .get_or_insert_with(|| TextShared::setup(ctx.gpu_device(), ctx.gpu_queue()));
 
         let TextShared { font_system } = &*shared;
 
@@ -302,14 +309,12 @@ impl crate::style::Style for TextRenderer {
 
         let size = [layout.total_width, layout.total_height];
 
-        // to avoid quantization and rounding errors
-        // todo: find a better way
         let size = [
             (size[0] + 0.5).min(constraints.max_width()),
             (size[1] + 0.5).min(constraints.max_height()),
         ];
 
-        Some(matcha_core::metrics::QRect::new([0.0, 0.0], size))
+        Some(matcha_core::tree_app::metrics::QRect::new([0.0, 0.0], size))
     }
 
     fn draw(
@@ -318,20 +323,16 @@ impl crate::style::Style for TextRenderer {
         target: &AtlasRegion,
         boundary_size: [f32; 2],
         offset: [f32; 2],
-        ctx: &WidgetContext,
+        ctx: &UiContext,
     ) {
-        // to avoid rounding errors
         let boundary_size = [boundary_size[0] + 0.5, boundary_size[1] + 0.5];
 
-        // Reuse shaped buffer and renderer where possible. Observe lock order:
-        // font_system -> swash_cache -> cache -> text_atlas
         let q_size = QSize::from(boundary_size);
-
         let constraints = Constraints::from_max_q_size(q_size);
 
-        let shared = ctx
-            .any_resource()
-            .get_or_insert_with(|| TextShared::setup(&ctx.device(), &ctx.queue()));
+        let shared = self
+            .text_shared
+            .get_or_insert_with(|| TextShared::setup(ctx.gpu_device(), ctx.gpu_queue()));
 
         let TextShared { font_system } = &*shared;
 
@@ -345,21 +346,17 @@ impl crate::style::Style for TextRenderer {
         let (_, text_layout) = &*text_layout;
 
         let texture = self.texture_cache.get_or_insert_with(&q_size, || {
-            Self::build_texture(text_layout, font_system, encoder, ctx)
+            Self::build_texture(text_layout, font_system, encoder, ctx.gpu_device())
         });
 
         let (_, texture) = &*texture;
-
-        let texture_copy = ctx
-            .any_resource()
-            .get_or_insert_default::<renderer::texture_copy::TextureCopy>();
 
         let Ok(mut render_pass) = target.begin_render_pass(encoder) else {
             log::error!("Failed to begin render pass");
             todo!()
         };
 
-        texture_copy.render(
+        self.texture_copy.render(
             &mut render_pass,
             renderer::texture_copy::TargetData {
                 target_size: target.texture_size(),
@@ -375,7 +372,7 @@ impl crate::style::Style for TextRenderer {
                 color_transformation: None,
                 color_offset: None,
             },
-            &ctx.device(),
+            ctx.gpu_device(),
         );
     }
 }

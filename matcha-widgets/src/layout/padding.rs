@@ -1,29 +1,25 @@
 use nalgebra::Matrix4;
 
-use matcha_core::context::WidgetContext;
-use matcha_core::{
-    device_input::DeviceInput,
-    metrics::{Arrangement, Constraints},
-    ui::{AnyWidget, AnyWidgetFrame, Background, Dom, InvalidationHandle, Widget, WidgetFrame},
+use matcha_core::event::device_event::DeviceEvent;
+use matcha_core::tree_app::{
+    context::UiContext,
+    metrics::Constraints,
+    widget::{View, Widget, WidgetInteractionResult, WidgetPod},
 };
 use renderer::render_node::RenderNode;
 
-pub struct Padding<T>
-where
-    T: Send + 'static,
-{
-    label: Option<String>,
-    top: f32,
-    right: f32,
-    bottom: f32,
-    left: f32,
-    content: Option<Box<dyn Dom<T>>>,
+use super::reconcile_single_child;
+
+pub struct Padding {
+    pub label: Option<String>,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub left: f32,
+    pub content: Option<Box<dyn View>>,
 }
 
-impl<T> Padding<T>
-where
-    T: Send + 'static,
-{
+impl Padding {
     pub fn new() -> Self {
         Self {
             label: None,
@@ -40,186 +36,154 @@ where
         self
     }
 
-    pub fn top(mut self, top: f32) -> Self {
-        self.top = top;
+    pub fn all(v: f32) -> Self {
+        Self {
+            label: None,
+            top: v,
+            right: v,
+            bottom: v,
+            left: v,
+            content: None,
+        }
+    }
+
+    pub fn top(mut self, v: f32) -> Self {
+        self.top = v;
         self
     }
 
-    pub fn right(mut self, right: f32) -> Self {
-        self.right = right;
+    pub fn right(mut self, v: f32) -> Self {
+        self.right = v;
         self
     }
 
-    pub fn bottom(mut self, bottom: f32) -> Self {
-        self.bottom = bottom;
+    pub fn bottom(mut self, v: f32) -> Self {
+        self.bottom = v;
         self
     }
 
-    pub fn left(mut self, left: f32) -> Self {
-        self.left = left;
+    pub fn left(mut self, v: f32) -> Self {
+        self.left = v;
         self
     }
 
-    pub fn content(mut self, content: impl Dom<T>) -> Self {
+    pub fn content(mut self, content: impl View + 'static) -> Self {
         self.content = Some(Box::new(content));
         self
     }
 }
 
-#[async_trait::async_trait]
-impl<T> Dom<T> for Padding<T>
-where
-    T: Send + 'static,
-{
-    fn build_widget_tree(&self) -> Box<dyn AnyWidgetFrame<T>> {
-        let mut children_and_settings = Vec::new();
-        let mut child_ids = Vec::new();
+impl Default for Padding {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-        if let Some(content_widget) = self.content.as_ref().map(|c| c.build_widget_tree()) {
-            children_and_settings.push((content_widget, ()));
-            child_ids.push(0);
-        }
-
-        Box::new(WidgetFrame::new(
-            self.label.clone(),
-            children_and_settings,
-            child_ids,
-            PaddingNode {
+impl View for Padding {
+    fn build(&self, ctx: &UiContext) -> WidgetPod {
+        let child = self.content.as_ref().map(|c| c.build(ctx));
+        let mut pod = WidgetPod::new(
+            0usize,
+            PaddingWidget {
                 top: self.top,
                 right: self.right,
                 bottom: self.bottom,
                 left: self.left,
+                child,
             },
-        ))
+        );
+        if let Some(label) = &self.label {
+            pod = pod.with_label(label.clone());
+        }
+        pod
     }
 }
 
-pub struct PaddingNode {
+pub struct PaddingWidget {
     top: f32,
     right: f32,
     bottom: f32,
     left: f32,
+    child: Option<WidgetPod>,
 }
 
-impl<T> Widget<Padding<T>, T, ()> for PaddingNode
-where
-    T: Send + 'static,
-{
-    fn update_widget<'a>(
-        &mut self,
-        dom: &'a Padding<T>,
-        cache_invalidator: Option<InvalidationHandle>,
-    ) -> Vec<(&'a dyn Dom<T>, (), u128)> {
-        if self.right != dom.right
-            || self.top != dom.top
-            || self.bottom != dom.bottom
-            || self.left != dom.left
-        {
-            cache_invalidator.map(|h| h.relayout_next_frame());
-        }
-        self.top = dom.top;
-        self.right = dom.right;
-        self.bottom = dom.bottom;
-        self.left = dom.left;
+impl PaddingWidget {
+    fn inner_bounds(&self, bounds: [f32; 2]) -> [f32; 2] {
+        [
+            (bounds[0] - self.left - self.right).max(0.0),
+            (bounds[1] - self.top - self.bottom).max(0.0),
+        ]
+    }
 
-        dom.content
-            .as_ref()
-            .map(|c| (c.as_ref(), (), 0))
-            .into_iter()
-            .collect()
+    fn child_affine(&self) -> Matrix4<f32> {
+        Matrix4::new_translation(&nalgebra::Vector3::new(self.left, self.top, 0.0))
+    }
+}
+
+impl Widget for PaddingWidget {
+    type View = Padding;
+
+    fn update(&mut self, view: &Padding, ctx: &UiContext) -> WidgetInteractionResult {
+        let dims_changed = self.top != view.top
+            || self.right != view.right
+            || self.bottom != view.bottom
+            || self.left != view.left;
+        self.top = view.top;
+        self.right = view.right;
+        self.bottom = view.bottom;
+        self.left = view.left;
+        let child_changed = reconcile_single_child(&mut self.child, view.content.as_deref(), ctx);
+        if dims_changed || child_changed {
+            WidgetInteractionResult::LayoutNeeded
+        } else {
+            WidgetInteractionResult::NoChange
+        }
     }
 
     fn device_input(
         &mut self,
-        _bounds: [f32; 2],
-        event: &DeviceInput,
-        children: &mut [(&mut dyn AnyWidget<T>, &mut (), &Arrangement)],
-        _cache_invalidator: InvalidationHandle,
-        ctx: &WidgetContext,
-    ) -> Option<T> {
-        if let Some((child, _, arrangement)) = children.first_mut() {
-            let child_event = event.transform(arrangement.affine);
-            return child.device_input(&child_event, ctx);
+        bounds: [f32; 2],
+        event: &DeviceEvent,
+        ctx: &UiContext,
+    ) -> WidgetInteractionResult {
+        let affine = self.child_affine();
+        let inner = self.inner_bounds(bounds);
+        let child_event = event.transform(affine);
+        if let Some(child) = &mut self.child {
+            return child.device_input(inner, &child_event, ctx);
+        }
+        WidgetInteractionResult::NoChange
+    }
+
+    fn measure(&self, constraints: &Constraints, ctx: &UiContext) -> [f32; 2] {
+        let h_pad = self.left + self.right;
+        let v_pad = self.top + self.bottom;
+        let inner = Constraints::new(
+            [
+                (constraints.min_width() - h_pad).max(0.0),
+                (constraints.max_width() - h_pad).max(0.0),
+            ],
+            [
+                (constraints.min_height() - v_pad).max(0.0),
+                (constraints.max_height() - v_pad).max(0.0),
+            ],
+        );
+        let content_size = self
+            .child
+            .as_ref()
+            .map(|c| c.measure(&inner, ctx))
+            .unwrap_or([0.0, 0.0]);
+        [content_size[0] + h_pad, content_size[1] + v_pad]
+    }
+
+    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode {
+        let inner = self.inner_bounds(bounds);
+        let affine = self.child_affine();
+        if let Some(child) = &mut self.child {
+            let child_node = child.render(inner, ctx);
+            RenderNode::new().add_child(child_node, affine)
         } else {
-            None
+            RenderNode::new()
         }
-    }
-
-    fn is_inside(
-        &self,
-        bounds: [f32; 2],
-        position: [f32; 2],
-        _children: &[(&dyn AnyWidget<T>, &(), &Arrangement)],
-        _ctx: &WidgetContext,
-    ) -> bool {
-        0.0 <= position[0]
-            && position[0] <= bounds[0]
-            && 0.0 <= position[1]
-            && position[1] <= bounds[1]
-    }
-
-    fn measure(
-        &self,
-        constraints: &Constraints,
-        children: &[(&dyn AnyWidget<T>, &())],
-        ctx: &WidgetContext,
-    ) -> [f32; 2] {
-        let content_size = if let Some((child, _)) = children.first() {
-            let inner_constraints = Constraints::new(
-                [
-                    (constraints.min_width() - self.left - self.right).max(0.0),
-                    (constraints.max_width() - self.left - self.right).max(0.0),
-                ],
-                [
-                    (constraints.min_height() - self.top - self.bottom).max(0.0),
-                    (constraints.max_height() - self.top - self.bottom).max(0.0),
-                ],
-            );
-            child.measure(&inner_constraints, ctx)
-        } else {
-            [0.0, 0.0]
-        };
-
-        [
-            content_size[0] + self.left + self.right,
-            content_size[1] + self.top + self.bottom,
-        ]
-    }
-
-    fn arrange(
-        &self,
-        bounds: [f32; 2],
-        children: &[(&dyn AnyWidget<T>, &())],
-        _ctx: &WidgetContext,
-    ) -> Vec<Arrangement> {
-        if children.is_empty() {
-            return vec![];
-        }
-
-        let content_final_size = [
-            (bounds[0] - self.left - self.right).max(0.0),
-            (bounds[1] - self.top - self.bottom).max(0.0),
-        ];
-
-        let transform = Matrix4::new_translation(&nalgebra::Vector3::new(self.left, self.top, 0.0));
-
-        vec![Arrangement::new(content_final_size, transform)]
-    }
-
-    fn render(
-        &self,
-        bounds: [f32; 2],
-        children: &[(&dyn AnyWidget<T>, &(), &Arrangement)],
-        background: Background,
-        ctx: &WidgetContext,
-    ) -> RenderNode {
-        if let Some((child, _, arrangement)) = children.first() {
-            let affine = arrangement.affine;
-
-            let child_node = child.render(background, ctx);
-
-            return RenderNode::new().add_child(child_node, affine);
-        }
-        RenderNode::default()
     }
 }

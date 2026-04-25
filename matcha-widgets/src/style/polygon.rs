@@ -4,8 +4,10 @@ use crate::style::Style;
 use gpu_utils::texture_atlas::atlas_simple::atlas::AtlasRegion;
 use matcha_core::{
     color::Color,
-    context::WidgetContext,
-    metrics::{QRect, QSize},
+    tree_app::{
+        context::UiContext,
+        metrics::{QRect, QSize},
+    },
 };
 use parking_lot::Mutex;
 use renderer::{
@@ -13,9 +15,9 @@ use renderer::{
     widgets_renderer::vertex_color::{RenderData, TargetData, VertexColor},
 };
 
-type PolygonFn = dyn for<'a> Fn([f32; 2], &'a WidgetContext) -> Mesh + Send + Sync + 'static;
+type PolygonFn = dyn for<'a> Fn([f32; 2], &'a UiContext) -> Mesh + Send + Sync + 'static;
 type AdaptFn =
-    dyn for<'a> Fn([f32; 2], &'a WidgetContext) -> nalgebra::Matrix4<f32> + Send + Sync + 'static;
+    dyn for<'a> Fn([f32; 2], &'a UiContext) -> nalgebra::Matrix4<f32> + Send + Sync + 'static;
 
 /// Quantize factor used for cache keying of matrices.
 /// Matches metrics SUB_PIXEL_QUANTIZE used for QSize / QRect quantization.
@@ -26,6 +28,7 @@ pub struct Polygon {
     adaptive_affine: Arc<AdaptFn>,
     cache_the_mesh: bool,
     caches: Mutex<utils::cache::Cache<CacheKey, Caches>>,
+    renderer: VertexColor,
 }
 
 #[derive(Clone, Debug)]
@@ -82,6 +85,7 @@ impl Clone for Polygon {
             adaptive_affine: self.adaptive_affine.clone(),
             cache_the_mesh: self.cache_the_mesh,
             caches: Mutex::new(utils::cache::Cache::default()),
+            renderer: VertexColor::default(),
         }
     }
 }
@@ -93,24 +97,26 @@ impl Polygon {
             adaptive_affine: Arc::new(|_, _| nalgebra::Matrix4::identity()),
             cache_the_mesh: true,
             caches: Mutex::new(utils::cache::Cache::default()),
+            renderer: VertexColor::default(),
         }
     }
 
     pub fn new_adaptive<F>(polygon: F) -> Self
     where
-        F: Fn([f32; 2], &WidgetContext) -> Mesh + Send + Sync + 'static,
+        F: Fn([f32; 2], &UiContext) -> Mesh + Send + Sync + 'static,
     {
         Self {
             polygon: Arc::new(polygon),
             adaptive_affine: Arc::new(|_, _| nalgebra::Matrix4::identity()),
             cache_the_mesh: true,
             caches: Mutex::new(utils::cache::Cache::default()),
+            renderer: VertexColor::default(),
         }
     }
 
     pub fn adaptive_affine<F>(mut self, affine: F) -> Self
     where
-        F: Fn([f32; 2], &WidgetContext) -> nalgebra::Matrix4<f32> + Send + Sync + 'static,
+        F: Fn([f32; 2], &UiContext) -> nalgebra::Matrix4<f32> + Send + Sync + 'static,
     {
         self.adaptive_affine = Arc::new(affine);
         self
@@ -127,9 +133,9 @@ impl Polygon {
 impl Style for Polygon {
     fn required_region(
         &self,
-        constraints: &matcha_core::metrics::Constraints,
-        ctx: &WidgetContext,
-    ) -> Option<matcha_core::metrics::QRect> {
+        constraints: &matcha_core::tree_app::metrics::Constraints,
+        ctx: &UiContext,
+    ) -> Option<matcha_core::tree_app::metrics::QRect> {
         let boundary = constraints.max_size();
         // compute adaptive_affine (it may affect bounding rect)
         let adaptive_affine = (self.adaptive_affine)(boundary, ctx);
@@ -253,7 +259,7 @@ impl Style for Polygon {
         }
     }
 
-    fn is_inside(&self, position: [f32; 2], boundary_size: [f32; 2], ctx: &WidgetContext) -> bool {
+    fn is_inside(&self, position: [f32; 2], boundary_size: [f32; 2], ctx: &UiContext) -> bool {
         // include adaptive_affine in key so hit-test matches rendering/rect
         let adaptive_affine = (self.adaptive_affine)(boundary_size, ctx);
         let key = CacheKey::new(boundary_size, &adaptive_affine);
@@ -348,7 +354,7 @@ impl Style for Polygon {
         target: &AtlasRegion,
         boundary_size: [f32; 2],
         offset: [f32; 2],
-        ctx: &WidgetContext,
+        ctx: &UiContext,
     ) {
         let target_size = target.texture_size();
         let target_format = target.format();
@@ -374,8 +380,6 @@ impl Style for Polygon {
         } else {
             (self.polygon)(boundary_size, ctx)
         };
-
-        let renderer = ctx.any_resource().get_or_insert_default::<VertexColor>();
 
         // build ColorVertex list and indices safely
         let (vertices, indices): (Vec<ColorVertex>, Vec<u16>) = match &mesh {
@@ -449,7 +453,7 @@ impl Style for Polygon {
                 * adaptive_affine;
 
         // Pass adaptive_affine through RenderData so renderer can compose final push-constant matrix.
-        renderer.render(
+        self.renderer.render(
             &mut render_pass,
             TargetData {
                 target_size,
@@ -460,7 +464,7 @@ impl Style for Polygon {
                 indices: &indices,
                 transform,
             },
-            &ctx.device(),
+            ctx.gpu_device(),
         );
     }
 }

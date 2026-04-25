@@ -1,36 +1,39 @@
 use std::sync::Arc;
 
+use crate::layout::reconcile_single_child;
 use crate::style::Style;
-use matcha_core::{
-    context::WidgetContext,
-    device_input::DeviceInput,
-    metrics::{Arrangement, Constraints},
-    ui::{
-        AnyWidgetFrame, Background, Dom, Widget, WidgetFrame,
-        widget::{AnyWidget, InvalidationHandle},
-    },
+use matcha_core::event::device_event::DeviceEvent;
+use matcha_core::tree_app::{
+    context::UiContext,
+    metrics::Constraints,
+    widget::{View, Widget, WidgetInteractionResult, WidgetPod},
 };
 use renderer::render_node::RenderNode;
 
-use crate::{buffer::Buffer, types::size::Size};
+use crate::types::size::{ChildSize, Size};
 
-// MARK: DOM
+// MARK: View
 
-pub struct Plain<T> {
-    label: Option<String>,
-    style: Vec<Arc<dyn Style>>,
-    content: Option<Box<dyn Dom<T>>>,
-    size: [Size; 2],
+pub struct Plain {
+    pub label: Option<String>,
+    pub style: Vec<Arc<dyn Style>>,
+    pub content: Option<Box<dyn View>>,
+    pub size: [Size; 2],
 }
 
-impl<T> Plain<T> {
-    pub fn new(label: Option<&str>) -> Box<Self> {
-        Box::new(Self {
-            label: label.map(|s| s.to_string()),
+impl Plain {
+    pub fn new() -> Self {
+        Self {
+            label: None,
             style: Vec::new(),
             content: None,
             size: [Size::child_w(1.0), Size::child_h(1.0)],
-        })
+        }
+    }
+
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
     }
 
     pub fn style(mut self, style: impl Style + 'static) -> Self {
@@ -38,7 +41,7 @@ impl<T> Plain<T> {
         self
     }
 
-    pub fn content(mut self, content: impl Dom<T>) -> Self {
+    pub fn content(mut self, content: impl View + 'static) -> Self {
         self.content = Some(Box::new(content));
         self
     }
@@ -49,156 +52,101 @@ impl<T> Plain<T> {
     }
 }
 
-#[async_trait::async_trait]
-impl<T: Send + Sync + 'static> Dom<T> for Plain<T> {
-    fn build_widget_tree(&self) -> Box<dyn AnyWidgetFrame<T>> {
-        let children = self
-            .content
-            .as_ref()
-            .map(|c| (c.build_widget_tree(), ()))
-            .into_iter()
-            .collect();
-        let child_ids = self.content.as_ref().map(|_| 0).into_iter().collect();
-
-        Box::new(WidgetFrame::new(
-            self.label.clone(),
-            children,
-            child_ids,
-            PlainNode {
+impl View for Plain {
+    fn build(&self, ctx: &UiContext) -> WidgetPod {
+        let child = self.content.as_ref().map(|c| c.build(ctx));
+        let mut pod = WidgetPod::new(
+            0usize,
+            PlainWidget {
                 style: self.style.clone(),
                 size: self.size.clone(),
-                buffer: Buffer::new(self.style.clone()),
-                _phantom: std::marker::PhantomData,
+                child,
             },
-        ))
+        );
+        if let Some(label) = &self.label {
+            pod = pod.with_label(label.clone());
+        }
+        pod
     }
 }
 
 // MARK: Widget
 
-pub struct PlainNode<T> {
+pub struct PlainWidget {
     style: Vec<Arc<dyn Style>>,
     size: [Size; 2],
-    buffer: Buffer,
-    _phantom: std::marker::PhantomData<T>,
+    child: Option<WidgetPod>,
 }
 
-impl<T: Send + Sync + 'static> Widget<Plain<T>, T, ()> for PlainNode<T> {
-    fn update_widget<'a>(
-        &mut self,
-        dom: &'a Plain<T>,
-        cache_invalidator: Option<InvalidationHandle>,
-    ) -> Vec<(&'a dyn Dom<T>, (), u128)> {
-        if self.size != dom.size
-            && let Some(handle) = cache_invalidator
-        {
-            handle.relayout_next_frame();
-        }
-        self.style = dom.style.clone();
-        self.size = dom.size.clone();
-        self.buffer = Buffer::new(self.style.clone());
+impl Widget for PlainWidget {
+    type View = Plain;
 
-        dom.content
-            .as_ref()
-            .map(|c| (&**c, (), 0))
-            .into_iter()
-            .collect()
-    }
-
-    fn measure(
-        &self,
-        constraints: &Constraints,
-        children: &[(&dyn AnyWidget<T>, &())],
-        ctx: &WidgetContext,
-    ) -> [f32; 2] {
-        let child_size = if let Some((child, _)) = children.first() {
-            child.measure(constraints, ctx)
+    fn update(&mut self, view: &Plain, ctx: &UiContext) -> WidgetInteractionResult {
+        let size_changed = self.size != view.size;
+        self.style = view.style.clone();
+        self.size = view.size.clone();
+        let child_changed = reconcile_single_child(&mut self.child, view.content.as_deref(), ctx);
+        if size_changed || child_changed {
+            WidgetInteractionResult::LayoutNeeded
         } else {
-            [0.0, 0.0]
-        };
-
-        let mut child_size_provider = crate::types::size::ChildSize::new(|| child_size);
-        let parent_size = [constraints.max_width(), constraints.max_height()];
-
-        let w = self.size[0].size(parent_size, &mut child_size_provider, ctx);
-        let h = self.size[1].size(parent_size, &mut child_size_provider, ctx);
-
-        [w, h]
-    }
-
-    fn arrange(
-        &self,
-        bounds: [f32; 2],
-        _children: &[(&dyn AnyWidget<T>, &())],
-        _ctx: &WidgetContext,
-    ) -> Vec<Arrangement> {
-        vec![Arrangement::new(bounds, nalgebra::Matrix4::identity())]
+            WidgetInteractionResult::NoChange
+        }
     }
 
     fn device_input(
         &mut self,
-        _bounds: [f32; 2],
-        event: &DeviceInput,
-        children: &mut [(&mut dyn AnyWidget<T>, &mut (), &Arrangement)],
-        _cache_invalidator: InvalidationHandle,
-        ctx: &WidgetContext,
-    ) -> Option<T> {
-        if let Some((child, _, arrangement)) = children.first_mut() {
-            let child_event = event.transform(arrangement.affine);
-            return child.device_input(&child_event, ctx);
-        }
-        None
-    }
-
-    fn is_inside(
-        &self,
         bounds: [f32; 2],
-        position: [f32; 2],
-        _children: &[(&dyn AnyWidget<T>, &(), &Arrangement)],
-        _ctx: &WidgetContext,
-    ) -> bool {
-        position[0] >= 0.0
-            && position[0] <= bounds[0]
-            && position[1] >= 0.0
-            && position[1] <= bounds[1]
+        event: &DeviceEvent,
+        ctx: &UiContext,
+    ) -> WidgetInteractionResult {
+        if let Some(child) = &mut self.child {
+            return child.device_input(bounds, event, ctx);
+        }
+        WidgetInteractionResult::NoChange
     }
 
-    fn render(
-        &self,
-        _bounds: [f32; 2],
-        children: &[(&dyn AnyWidget<T>, &(), &Arrangement)],
-        background: Background,
-        ctx: &WidgetContext,
-    ) -> RenderNode {
-        let (child, _, arrangement) = children[0];
-        let size = arrangement.size;
+    fn measure(&self, constraints: &Constraints, ctx: &UiContext) -> [f32; 2] {
+        let child_size = self
+            .child
+            .as_ref()
+            .map(|c| c.measure(constraints, ctx))
+            .unwrap_or([0.0, 0.0]);
 
+        let parent_size = [constraints.max_width(), constraints.max_height()];
+        let mut child_size_provider = ChildSize::new(|| child_size);
+
+        let w = self.size[0].size(parent_size, &mut child_size_provider, ctx);
+        let h = self.size[1].size(parent_size, &mut child_size_provider, ctx);
+        [w, h]
+    }
+
+    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode {
         let mut render_node = RenderNode::new();
 
-        if size[0] > 0.0 && size[1] > 0.0 {
-            let texture_size = [size[0].ceil() as u32, size[1].ceil() as u32];
-            if let Ok(style_region) =
-                ctx.texture_atlas()
-                    .allocate(&ctx.device(), &ctx.queue(), texture_size)
+        if bounds[0] > 0.0 && bounds[1] > 0.0 {
+            let texture_size = [bounds[0].ceil() as u32, bounds[1].ceil() as u32];
+            if let Ok(style_region) = ctx
+                .texture_atlas()
+                .allocate(ctx.gpu_device(), ctx.gpu_queue(), texture_size)
             {
                 let mut encoder =
-                    ctx.device()
+                    ctx.gpu_device()
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                             label: Some("Plain Render Encoder"),
                         });
-
                 for style in &self.style {
-                    style.draw(&mut encoder, &style_region, size, [0.0, 0.0], ctx);
+                    style.draw(&mut encoder, &style_region, bounds, [0.0, 0.0], ctx);
                 }
-
-                ctx.queue().submit(Some(encoder.finish()));
+                ctx.gpu_queue().submit(Some(encoder.finish()));
                 render_node =
-                    render_node.with_texture(style_region, size, nalgebra::Matrix4::identity());
+                    render_node.with_texture(style_region, bounds, nalgebra::Matrix4::identity());
             }
         }
 
-        let child_node = child.render(background, ctx);
-        render_node.push_child(child_node, arrangement.affine);
+        if let Some(child) = &mut self.child {
+            let child_node = child.render(bounds, ctx);
+            render_node.push_child(child_node, nalgebra::Matrix4::identity());
+        }
 
         render_node
     }

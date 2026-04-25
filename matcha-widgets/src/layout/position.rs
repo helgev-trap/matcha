@@ -1,25 +1,25 @@
 use nalgebra::Matrix4;
 
-use matcha_core::context::WidgetContext;
-use matcha_core::{
-    device_input::DeviceInput,
-    metrics::{Arrangement, Constraints},
-    ui::{AnyWidget, AnyWidgetFrame, Background, Dom, InvalidationHandle, Widget, WidgetFrame},
+use matcha_core::event::device_event::DeviceEvent;
+use matcha_core::tree_app::{
+    context::UiContext,
+    metrics::Constraints,
+    widget::{View, Widget, WidgetInteractionResult, WidgetPod},
 };
 use renderer::render_node::RenderNode;
 
-// MARK: DOM
+use super::reconcile_single_child;
 
-pub struct Position<T: Send + 'static> {
-    label: Option<String>,
-    left: Option<f32>,
-    top: Option<f32>,
-    right: Option<f32>,
-    bottom: Option<f32>,
-    content: Option<Box<dyn Dom<T>>>,
+pub struct Position {
+    pub label: Option<String>,
+    pub left: Option<f32>,
+    pub top: Option<f32>,
+    pub right: Option<f32>,
+    pub bottom: Option<f32>,
+    pub content: Option<Box<dyn View>>,
 }
 
-impl<T: Send + 'static> Position<T> {
+impl Position {
     pub fn new() -> Self {
         Self {
             label: None,
@@ -31,217 +31,168 @@ impl<T: Send + 'static> Position<T> {
         }
     }
 
-    pub fn left(mut self, left: f32) -> Self {
-        self.left = Some(left);
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
         self
     }
 
-    pub fn top(mut self, top: f32) -> Self {
-        self.top = Some(top);
+    pub fn left(mut self, v: f32) -> Self {
+        self.left = Some(v);
         self
     }
 
-    pub fn right(mut self, right: f32) -> Self {
-        self.right = Some(right);
+    pub fn top(mut self, v: f32) -> Self {
+        self.top = Some(v);
         self
     }
 
-    pub fn bottom(mut self, bottom: f32) -> Self {
-        self.bottom = Some(bottom);
+    pub fn right(mut self, v: f32) -> Self {
+        self.right = Some(v);
         self
     }
 
-    pub fn content(mut self, content: impl Dom<T>) -> Self {
+    pub fn bottom(mut self, v: f32) -> Self {
+        self.bottom = Some(v);
+        self
+    }
+
+    pub fn content(mut self, content: impl View + 'static) -> Self {
         self.content = Some(Box::new(content));
         self
     }
 }
 
-#[async_trait::async_trait]
-impl<T: Send + 'static> Dom<T> for Position<T> {
-    fn build_widget_tree(&self) -> Box<dyn AnyWidgetFrame<T>> {
-        let mut children_and_settings = Vec::new();
-        let mut child_ids = Vec::new();
+impl Default for Position {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-        if let Some(content_widget) = self.content.as_ref().map(|c| c.build_widget_tree()) {
-            children_and_settings.push((content_widget, ()));
-            child_ids.push(0);
-        }
-
-        Box::new(WidgetFrame::new(
-            self.label.clone(),
-            children_and_settings,
-            child_ids,
-            PositionNode {
+impl View for Position {
+    fn build(&self, ctx: &UiContext) -> WidgetPod {
+        let child = self.content.as_ref().map(|c| c.build(ctx));
+        let mut pod = WidgetPod::new(
+            0usize,
+            PositionWidget {
                 left: self.left,
                 top: self.top,
                 right: self.right,
                 bottom: self.bottom,
+                child,
             },
-        ))
+        );
+        if let Some(label) = &self.label {
+            pod = pod.with_label(label.clone());
+        }
+        pod
     }
 }
 
-// MARK: Widget
-
-pub struct PositionNode {
+pub struct PositionWidget {
     left: Option<f32>,
     top: Option<f32>,
     right: Option<f32>,
     bottom: Option<f32>,
+    child: Option<WidgetPod>,
 }
 
-impl<T: Send + 'static> Widget<Position<T>, T, ()> for PositionNode {
-    fn update_widget<'a>(
-        &mut self,
-        dom: &'a Position<T>,
-        _cache_invalidator: Option<InvalidationHandle>,
-    ) -> Vec<(&'a dyn Dom<T>, (), u128)> {
-        self.left = dom.left;
-        self.top = dom.top;
-        self.right = dom.right;
-        self.bottom = dom.bottom;
-        dom.content
-            .as_ref()
-            .map(|c| (c.as_ref(), (), 0))
-            .into_iter()
-            .collect()
+impl PositionWidget {
+    fn child_layout(&self, bounds: [f32; 2], child: &WidgetPod, ctx: &UiContext) -> ([f32; 2], Matrix4<f32>) {
+        let h_margin = self.left.unwrap_or(0.0) + self.right.unwrap_or(0.0);
+        let v_margin = self.top.unwrap_or(0.0) + self.bottom.unwrap_or(0.0);
+        let available = [
+            (bounds[0] - h_margin).max(0.0),
+            (bounds[1] - v_margin).max(0.0),
+        ];
+        let child_constraints = Constraints::new([0.0, available[0]], [0.0, available[1]]);
+        let child_size = child.measure(&child_constraints, ctx);
+        let final_size = [
+            child_size[0].clamp(0.0, available[0]),
+            child_size[1].clamp(0.0, available[1]),
+        ];
+
+        let x = match (self.left, self.right) {
+            (Some(l), _) => l,
+            (None, Some(r)) => bounds[0] - r - final_size[0],
+            (None, None) => 0.0,
+        };
+        let y = match (self.top, self.bottom) {
+            (Some(t), _) => t,
+            (None, Some(b)) => bounds[1] - b - final_size[1],
+            (None, None) => 0.0,
+        };
+
+        (final_size, Matrix4::new_translation(&nalgebra::Vector3::new(x, y, 0.0)))
+    }
+}
+
+impl Widget for PositionWidget {
+    type View = Position;
+
+    fn update(&mut self, view: &Position, ctx: &UiContext) -> WidgetInteractionResult {
+        let changed = self.left != view.left
+            || self.top != view.top
+            || self.right != view.right
+            || self.bottom != view.bottom;
+        self.left = view.left;
+        self.top = view.top;
+        self.right = view.right;
+        self.bottom = view.bottom;
+        let child_changed = reconcile_single_child(&mut self.child, view.content.as_deref(), ctx);
+        if changed || child_changed {
+            WidgetInteractionResult::LayoutNeeded
+        } else {
+            WidgetInteractionResult::NoChange
+        }
     }
 
     fn device_input(
         &mut self,
-        _bounds: [f32; 2],
-        event: &DeviceInput,
-        children: &mut [(&mut dyn AnyWidget<T>, &mut (), &Arrangement)],
-        _cache_invalidator: InvalidationHandle,
-        ctx: &WidgetContext,
-    ) -> Option<T> {
-        if let Some((child, _, arrangement)) = children.first_mut() {
-            let child_event = event.transform(arrangement.affine);
-            return child.device_input(&child_event, ctx);
-        }
-        None
-    }
-
-    fn is_inside(
-        &self,
         bounds: [f32; 2],
-        position: [f32; 2],
-        _children: &[(&dyn AnyWidget<T>, &(), &Arrangement)],
-        _ctx: &WidgetContext,
-    ) -> bool {
-        0.0 <= position[0]
-            && position[0] <= bounds[0]
-            && 0.0 <= position[1]
-            && position[1] <= bounds[1]
+        event: &DeviceEvent,
+        ctx: &UiContext,
+    ) -> WidgetInteractionResult {
+        if self.child.is_none() {
+            return WidgetInteractionResult::NoChange;
+        }
+        let (child_size, affine) = {
+            let child = self.child.as_ref().unwrap();
+            self.child_layout(bounds, child, ctx)
+        };
+        let child_event = event.transform(affine);
+        self.child.as_mut().unwrap().device_input(child_size, &child_event, ctx)
     }
 
-    fn measure(
-        &self,
-        constraints: &Constraints,
-        children: &[(&dyn AnyWidget<T>, &())],
-        ctx: &WidgetContext,
-    ) -> [f32; 2] {
-        let mut width = constraints.width();
-        let mut height = constraints.height();
-
-        // left
-        if let Some(left) = self.left {
-            width[0] = (width[0] - left).max(0.0);
-            width[1] = (width[1] - left).max(0.0);
-        }
-
-        // top
-        if let Some(top) = self.top {
-            height[0] = (height[0] - top).max(0.0);
-            height[1] = (height[1] - top).max(0.0);
-        }
-
-        // right
-        if let Some(right) = self.right {
-            width[0] = (width[0] - right).max(0.0);
-            width[1] = (width[1] - right).max(0.0);
-        }
-
-        // bottom
-        if let Some(bottom) = self.bottom {
-            height[0] = (height[0] - bottom).max(0.0);
-            height[1] = (height[1] - bottom).max(0.0);
-        }
-
-        let child_constraints = Constraints::new(width, height);
-
-        let child_measured_size = if let Some((child, _)) = children.first() {
-            child.measure(&child_constraints, ctx)
-        } else {
-            [0.0, 0.0]
-        };
-
-        let measured_width =
-            child_measured_size[0] + self.left.unwrap_or(0.0) + self.right.unwrap_or(0.0);
-        let measured_height =
-            child_measured_size[1] + self.top.unwrap_or(0.0) + self.bottom.unwrap_or(0.0);
-
-        [measured_width, measured_height]
+    fn measure(&self, constraints: &Constraints, ctx: &UiContext) -> [f32; 2] {
+        let h_margin = self.left.unwrap_or(0.0) + self.right.unwrap_or(0.0);
+        let v_margin = self.top.unwrap_or(0.0) + self.bottom.unwrap_or(0.0);
+        let inner = Constraints::new(
+            [
+                (constraints.min_width() - h_margin).max(0.0),
+                (constraints.max_width() - h_margin).max(0.0),
+            ],
+            [
+                (constraints.min_height() - v_margin).max(0.0),
+                (constraints.max_height() - v_margin).max(0.0),
+            ],
+        );
+        let child_size = self
+            .child
+            .as_ref()
+            .map(|c| c.measure(&inner, ctx))
+            .unwrap_or([0.0, 0.0]);
+        [child_size[0] + h_margin, child_size[1] + v_margin]
     }
 
-    fn arrange(
-        &self,
-        bounds: [f32; 2],
-        children: &[(&dyn AnyWidget<T>, &())],
-        ctx: &WidgetContext,
-    ) -> Vec<Arrangement> {
-        let Some((content, _)) = children.first() else {
-            return vec![];
-        };
-
-        // available space for child (parent size minus margins)
-        let available = [
-            (bounds[0] - self.left.unwrap_or(0.0) - self.right.unwrap_or(0.0)).max(0.0),
-            (bounds[1] - self.top.unwrap_or(0.0) - self.bottom.unwrap_or(0.0)).max(0.0),
-        ];
-
-        // give child a flexible constraint up to available space
-        let content_constraints = Constraints::new([0.0, available[0]], [0.0, available[1]]);
-        let content_measured_size = content.measure(&content_constraints, ctx);
-
-        // final child size: clamp to available (defensive)
-        let final_child_size = [
-            content_measured_size[0].clamp(0.0, available[0]),
-            content_measured_size[1].clamp(0.0, available[1]),
-        ];
-
-        let offset_x = match (self.left, self.right) {
-            (Some(left), _) => left,
-            (None, Some(right)) => bounds[0] - right - final_child_size[0],
-            (None, None) => 0.0,
-        };
-        let offset_y = match (self.top, self.bottom) {
-            (Some(top), _) => top,
-            (None, Some(bottom)) => bounds[1] - bottom - final_child_size[1],
-            (None, None) => 0.0,
-        };
-
-        vec![Arrangement::new(
-            final_child_size,
-            Matrix4::new_translation(&nalgebra::Vector3::new(offset_x, offset_y, 0.0)),
-        )]
-    }
-
-    fn render(
-        &self,
-        _bounds: [f32; 2],
-        children: &[(&dyn AnyWidget<T>, &(), &Arrangement)],
-        background: Background,
-        ctx: &WidgetContext,
-    ) -> RenderNode {
-        if let Some((child, _, arrangement)) = children.first() {
-            let affine = arrangement.affine;
-
-            let child_node = child.render(background, ctx);
-
-            return RenderNode::new().add_child(child_node, affine);
+    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode {
+        if self.child.is_none() {
+            return RenderNode::new();
         }
-        RenderNode::default()
+        let (child_size, affine) = {
+            let child = self.child.as_ref().unwrap();
+            self.child_layout(bounds, child, ctx)
+        };
+        let child_node = self.child.as_mut().unwrap().render(child_size, ctx);
+        RenderNode::new().add_child(child_node, affine)
     }
 }

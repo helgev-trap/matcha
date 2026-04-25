@@ -4,8 +4,8 @@ use crate::style::Style;
 use dashmap::DashMap;
 use gpu_utils::device_loss_recoverable::DeviceLossRecoverable;
 use image::EncodableLayout;
-use matcha_core::{
-    context::WidgetContext,
+use matcha_core::tree_app::{
+    context::UiContext,
     metrics::{Constraints, QRect},
 };
 use renderer::widgets_renderer::texture_copy::{RenderData, TargetData, TextureCopy};
@@ -112,11 +112,28 @@ pub enum VAlign {
     Bottom,
 }
 
-#[derive(Clone, PartialEq)]
 pub struct Image {
     image: ImageSource,
     size: [Size; 2],
     offset: [Size; 2],
+    image_cache: Arc<ImageCache>,
+}
+
+impl Clone for Image {
+    fn clone(&self) -> Self {
+        Self {
+            image: self.image.clone(),
+            size: self.size.clone(),
+            offset: self.offset.clone(),
+            image_cache: self.image_cache.clone(),
+        }
+    }
+}
+
+impl PartialEq for Image {
+    fn eq(&self, other: &Self) -> bool {
+        self.image == other.image && self.size == other.size && self.offset == other.offset
+    }
 }
 
 impl Image {
@@ -125,6 +142,7 @@ impl Image {
             image: source.into(),
             size: [Size::child_w(1.0), Size::child_h(1.0)],
             offset: [Size::px(0.0), Size::px(0.0)],
+            image_cache: Arc::new(ImageCache::default()),
         }
     }
 
@@ -179,7 +197,6 @@ impl Image {
 
     /// Align center both axes.
     pub fn align_center(mut self) -> Self {
-        // offset = (parent - child) * 0.5
         let ox = Size::from_size(|parent, child, _ctx| (parent[0] - child.get()[0]) * 0.5);
         let oy = Size::from_size(|parent, child, _ctx| (parent[1] - child.get()[1]) * 0.5);
         self.offset = [ox, oy];
@@ -235,7 +252,6 @@ impl Image {
         self
     }
 
-    // Existing simple setters kept below (they will overwrite)
     pub fn size(mut self, size: [Size; 2]) -> Self {
         self.size = size;
         self
@@ -255,9 +271,9 @@ impl Image {
 
 // helper methods
 impl Image {
-    fn with_image<R>(&self, ctx: &WidgetContext, f: impl FnOnce(&wgpu::Texture) -> R) -> Option<R> {
-        let cache_map = ctx.gpu_resource().get_or_insert_default::<ImageCache>();
-        let image_cache = cache_map
+    fn with_image<R>(&self, ctx: &UiContext, f: impl FnOnce(&wgpu::Texture) -> R) -> Option<R> {
+        let image_cache = self
+            .image_cache
             .map
             .entry(self.key())
             .or_insert_with(|| load_image_to_texture(&self.image, ctx));
@@ -272,7 +288,7 @@ impl Image {
         &self,
         boundary: [f32; 2],
         pic_texture: &wgpu::Texture,
-        ctx: &WidgetContext,
+        ctx: &UiContext,
     ) -> QRect {
         let image_size = [pic_texture.width() as f32, pic_texture.height() as f32];
 
@@ -288,13 +304,13 @@ impl Image {
 // MARK: Style implementation
 
 impl Style for Image {
-    fn required_region(&self, constraints: &Constraints, ctx: &WidgetContext) -> Option<QRect> {
+    fn required_region(&self, constraints: &Constraints, ctx: &UiContext) -> Option<QRect> {
         let boundary_size = constraints.max_size();
 
         self.with_image(ctx, |texture| self.calc_layout(boundary_size, texture, ctx))
     }
 
-    fn is_inside(&self, position: [f32; 2], boundary_size: [f32; 2], ctx: &WidgetContext) -> bool {
+    fn is_inside(&self, position: [f32; 2], boundary_size: [f32; 2], ctx: &UiContext) -> bool {
         let draw_range = self.required_region(&Constraints::from_boundary(boundary_size), ctx);
         if let Some(rect) = draw_range {
             rect.contains(position)
@@ -309,7 +325,7 @@ impl Style for Image {
         target: &gpu_utils::texture_atlas::atlas_simple::atlas::AtlasRegion,
         boundary_size: [f32; 2],
         offset: [f32; 2],
-        ctx: &WidgetContext,
+        ctx: &UiContext,
     ) {
         let target_size = target.texture_size();
         let target_format = target.format();
@@ -319,7 +335,6 @@ impl Style for Image {
             let draw_offset = [rect.min_x() - offset[0], rect.min_y() - offset[1]];
             let draw_size = [rect.width(), rect.height()];
 
-            // begin a render pass targeting the atlas region so the renderer can create its own passes if needed
             let mut render_pass = match target.begin_render_pass(encoder) {
                 Ok(rp) => rp,
                 Err(_) => return,
@@ -343,15 +358,13 @@ impl Style for Image {
                     color_transformation: None,
                     color_offset: None,
                 },
-                &ctx.device(),
+                ctx.gpu_device(),
             );
         });
     }
 }
 
-fn load_image_to_texture(image_source: &ImageSource, ctx: &WidgetContext) -> ImageCacheData {
-    // load the image from the source
-
+fn load_image_to_texture(image_source: &ImageSource, ctx: &UiContext) -> ImageCacheData {
     let dynamic_image = match image_source {
         ImageSource::Path(path) => image::open(path).ok(),
         ImageSource::StaticSlice { data, .. } => image::load_from_memory(data).ok(),
@@ -359,11 +372,9 @@ fn load_image_to_texture(image_source: &ImageSource, ctx: &WidgetContext) -> Ima
     };
 
     let Some(dynamic_image) = dynamic_image else {
-        // If the image could not be loaded, return an empty cache entry
         return ImageCacheData { texture: None };
     };
 
-    // Create a texture and upload image data
     let (image, format) = prepare_image_and_format(dynamic_image);
     ImageCacheData {
         texture: Some(make_cache(image, format, ctx)),
@@ -376,8 +387,6 @@ fn prepare_image_and_format(
     image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
     wgpu::TextureFormat,
 ) {
-    // Normalize all incoming images to RGBA8 to simplify bytes_per_row handling.
-    // This avoids format-dependent byte-per-pixel calculations and prevents copy overruns.
     let image_rgba8: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> = dynamic_image.to_rgba8();
     (image_rgba8, wgpu::TextureFormat::Rgba8UnormSrgb)
 }
@@ -385,15 +394,14 @@ fn prepare_image_and_format(
 fn make_cache(
     image: image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
     format: wgpu::TextureFormat,
-    ctx: &WidgetContext,
+    ctx: &UiContext,
 ) -> wgpu::Texture {
     let (width, height) = image.dimensions();
     let data = image.as_bytes();
 
-    let device = ctx.device();
-    let queue = ctx.queue();
+    let device = ctx.gpu_device();
+    let queue = ctx.gpu_queue();
 
-    // create texture
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Image Texture"),
         size: wgpu::Extent3d {
@@ -409,7 +417,6 @@ fn make_cache(
         view_formats: &[],
     });
 
-    // We converted image bytes to RGBA8 in prepare_image_and_format, so use 4 bytes per pixel.]
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {
             texture: &texture,
@@ -420,7 +427,6 @@ fn make_cache(
         data,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            // use explicit 4 bytes per pixel for RGBA8
             bytes_per_row: Some(4 * width),
             rows_per_image: None,
         },
@@ -435,10 +441,8 @@ fn make_cache(
 }
 
 #[rustfmt::skip]
-// note: this function is currently not being used but may be useful in the future
 fn _color_transform(color_type: image::ColorType) -> nalgebra::Matrix4<f32> {
     match color_type {
-        // stored as r
         image::ColorType::L8
         | image::ColorType::L16 => nalgebra::Matrix4::new(
             1.0, 0.0, 0.0, 0.0,
@@ -446,7 +450,6 @@ fn _color_transform(color_type: image::ColorType) -> nalgebra::Matrix4<f32> {
             1.0, 0.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 0.0,
         ),
-        // stored as rg
         image::ColorType::La8
         | image::ColorType::La16 => nalgebra::Matrix4::new(
             1.0, 0.0, 0.0, 0.0,
@@ -454,7 +457,6 @@ fn _color_transform(color_type: image::ColorType) -> nalgebra::Matrix4<f32> {
             1.0, 0.0, 0.0, 0.0,
             0.0, 1.0, 0.0, 0.0,
         ),
-        // stored as rgba
         image::ColorType::Rgb8
         | image::ColorType::Rgb16
         | image::ColorType::Rgb32F
@@ -470,12 +472,9 @@ fn _color_transform(color_type: image::ColorType) -> nalgebra::Matrix4<f32> {
     }
 }
 
-// note: this function is currently not being used but may be useful in the future
 fn _color_offset(color_type: image::ColorType) -> [f32; 4] {
     match color_type {
-        // alpha is not stored, so we set it to 1.0
         image::ColorType::L8 | image::ColorType::L16 => [0.0, 0.0, 0.0, 1.0],
-        // alpha is stored in the texture
         image::ColorType::La8
         | image::ColorType::La16
         | image::ColorType::Rgb8

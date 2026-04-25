@@ -7,8 +7,8 @@ pub mod viewport_clear;
 use std::sync::Arc;
 
 use gpu_utils::texture_atlas::atlas_simple::atlas::AtlasRegion;
-use matcha_core::{
-    context::WidgetContext,
+use matcha_core::tree_app::{
+    context::UiContext,
     metrics::{Constraints, QRect},
 };
 
@@ -32,11 +32,11 @@ pub trait Style: Send + Sync {
     ///
     /// An array `[width, height]` representing the required size in pixels.
     /// If the style does not have a specific size requirement, it returns `None`.
-    fn required_region(&self, constraints: &Constraints, ctx: &WidgetContext) -> Option<QRect>;
+    fn required_region(&self, constraints: &Constraints, ctx: &UiContext) -> Option<QRect>;
 
     /// Checks if a given position is inside the shape defined by this style.
     /// This is necessary for styles that have non-rectangular shapes.
-    fn is_inside(&self, position: [f32; 2], bounds: [f32; 2], ctx: &WidgetContext) -> bool {
+    fn is_inside(&self, position: [f32; 2], bounds: [f32; 2], ctx: &UiContext) -> bool {
         let Some(rect) = self.required_region(&Constraints::from_boundary(bounds), ctx) else {
             return false;
         };
@@ -53,12 +53,12 @@ pub trait Style: Send + Sync {
         target: &AtlasRegion,
         boundary_size: [f32; 2],
         offset: [f32; 2],
-        ctx: &WidgetContext,
+        ctx: &UiContext,
     );
 }
 
 impl Style for Vec<Arc<dyn Style>> {
-    fn required_region(&self, constraints: &Constraints, ctx: &WidgetContext) -> Option<QRect> {
+    fn required_region(&self, constraints: &Constraints, ctx: &UiContext) -> Option<QRect> {
         let mut result: Option<QRect> = None;
         for style in self {
             if let Some(region) = style.required_region(constraints, ctx) {
@@ -71,7 +71,7 @@ impl Style for Vec<Arc<dyn Style>> {
         result
     }
 
-    fn is_inside(&self, position: [f32; 2], bounds: [f32; 2], ctx: &WidgetContext) -> bool {
+    fn is_inside(&self, position: [f32; 2], bounds: [f32; 2], ctx: &UiContext) -> bool {
         for style in self {
             if style.is_inside(position, bounds, ctx) {
                 return true;
@@ -86,7 +86,7 @@ impl Style for Vec<Arc<dyn Style>> {
         target: &AtlasRegion,
         boundary_size: [f32; 2],
         offset: [f32; 2],
-        ctx: &WidgetContext,
+        ctx: &UiContext,
     ) {
         for style in self {
             style.draw(encoder, target, boundary_size, offset, ctx);

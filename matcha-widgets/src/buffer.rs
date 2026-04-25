@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::style::Style;
 use gpu_utils::texture_atlas::atlas_simple::atlas::AtlasRegion;
-use matcha_core::{context::WidgetContext, metrics::QRect};
+use matcha_core::tree_app::{context::UiContext, metrics::QRect};
 use utils::cache::Cache;
 
 pub struct Buffer {
@@ -27,7 +27,7 @@ impl Buffer {
         &self,
         position: [f32; 2],
         boundary_size: [f32; 2],
-        ctx: &WidgetContext,
+        ctx: &UiContext,
     ) -> bool {
         for style in &self.style {
             if style.is_inside(position, boundary_size, ctx) {
@@ -41,7 +41,7 @@ impl Buffer {
         &mut self,
         boundary: [f32; 2],
         encoder: &mut wgpu::CommandEncoder,
-        ctx: &WidgetContext,
+        ctx: &UiContext,
     ) -> Option<&BufferData> {
         let (_, cache) = self.cache.get_or_insert_with(&boundary, || {
             // calculate necessary size for the texture
@@ -52,7 +52,7 @@ impl Buffer {
 
             for style in &self.style {
                 let range = style.required_region(
-                    &matcha_core::metrics::Constraints::from_boundary(boundary),
+                    &matcha_core::tree_app::metrics::Constraints::from_boundary(boundary),
                     ctx,
                 );
                 let Some(range) = range else {
@@ -87,7 +87,7 @@ impl Buffer {
             // We unwrap here because allocation failure is unexpected in normal operation.
             let atlas_region = ctx
                 .texture_atlas()
-                .allocate(&ctx.device(), &ctx.queue(), texture_size)
+                .allocate(ctx.gpu_device(), ctx.gpu_queue(), texture_size)
                 .expect("Texture atlas allocation failed for Buffer");
 
             for style in &self.style {

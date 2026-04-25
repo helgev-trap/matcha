@@ -2,7 +2,7 @@ use crate::style::Style;
 use cosmic_text::{Attrs, Buffer, Color, FontSystem, Metrics, Shaping, SwashCache};
 use fxhash::FxHasher;
 use gpu_utils::texture_atlas::atlas_simple::atlas::AtlasRegion;
-use matcha_core::context::WidgetContext;
+use matcha_core::tree_app::context::UiContext;
 use parking_lot::Mutex;
 use renderer::widgets_renderer::texture_copy::{
     RenderData as TexRenderData, TargetData as TexTargetData, TextureCopy,
@@ -34,6 +34,7 @@ pub struct TextCosmic<'a> {
     pub cache_in_memory: Mutex<Option<CacheInMemory>>,
     // optional cached GPU texture for reuse (staging -> atlas fallback)
     pub cache_in_texture: Mutex<Option<wgpu::Texture>>,
+    font_context: FontContext,
 }
 
 #[derive(Clone)]
@@ -60,6 +61,7 @@ impl<'a> Clone for TextCosmic<'a> {
             buffer: Mutex::new(None),
             cache_in_memory: Mutex::new(None),
             cache_in_texture: Mutex::new(None),
+            font_context: FontContext::default(),
         }
     }
 }
@@ -79,6 +81,7 @@ impl<'a> TextCosmic<'a> {
             buffer: Mutex::new(None),
             cache_in_memory: Mutex::new(None),
             cache_in_texture: Mutex::new(None),
+            font_context: FontContext::default(),
         }
     }
 }
@@ -196,9 +199,9 @@ impl TextCosmic<'_> {
         }
     }
 
-    fn render_to_texture(&self, size: [u32; 2], data: &[u8], ctx: &WidgetContext) -> wgpu::Texture {
-        let device = ctx.device();
-        let queue = ctx.queue();
+    fn render_to_texture(&self, size: [u32; 2], data: &[u8], ctx: &UiContext) -> wgpu::Texture {
+        let device = ctx.gpu_device();
+        let queue = ctx.gpu_queue();
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("TextCosmic Texture"),
             size: wgpu::Extent3d {
@@ -266,11 +269,9 @@ impl TextCosmic<'_> {
     fn draw_range(
         &self,
         boundary_size: [f32; 2],
-        ctx: &WidgetContext,
-    ) -> matcha_core::metrics::QRect {
-        // compute layout similarly to required_region but returning QRect
-        let font_context = ctx.any_resource().get_or_insert_default::<FontContext>();
-        let mut font_system = font_context.font_system.lock();
+        _ctx: &UiContext,
+    ) -> matcha_core::tree_app::metrics::QRect {
+        let mut font_system = self.font_context.font_system.lock();
 
         let mut buffer = Buffer::new(&mut font_system, self.metrics);
 
@@ -313,14 +314,14 @@ impl TextCosmic<'_> {
 impl Style for TextCosmic<'static> {
     fn required_region(
         &self,
-        constraints: &matcha_core::metrics::Constraints,
-        ctx: &WidgetContext,
-    ) -> Option<matcha_core::metrics::QRect> {
+        constraints: &matcha_core::tree_app::metrics::Constraints,
+        ctx: &UiContext,
+    ) -> Option<matcha_core::tree_app::metrics::QRect> {
         let rect = self.draw_range(constraints.max_size(), ctx);
         if rect.area() > 0.0 { Some(rect) } else { None }
     }
 
-    fn is_inside(&self, position: [f32; 2], boundary_size: [f32; 2], ctx: &WidgetContext) -> bool {
+    fn is_inside(&self, position: [f32; 2], boundary_size: [f32; 2], ctx: &UiContext) -> bool {
         let draw_range = self.draw_range(boundary_size, ctx);
         let x_range = draw_range.x();
         let y_range = draw_range.y();
@@ -337,13 +338,10 @@ impl Style for TextCosmic<'static> {
         target: &AtlasRegion,
         _boundary_size: [f32; 2],
         _offset: [f32; 2],
-        ctx: &WidgetContext,
+        ctx: &UiContext,
     ) {
-        // Ensure buffer and in-memory cache exist
-        let font_context = ctx.any_resource().get_or_insert_default::<FontContext>();
-
-        let font_system = &font_context.font_system;
-        let swash_cache = &font_context.swash_cache;
+        let font_system = &self.font_context.font_system;
+        let swash_cache = &self.font_context.swash_cache;
 
         // compute key for current state
         let current_key = self.make_cache_key();
@@ -387,7 +385,7 @@ impl Style for TextCosmic<'static> {
 
         // Try to write raw RGBA data into the atlas region using the queue (preferred, cheaper).
         let data = &cache_in_memory.data;
-        let write_result = target.write_data(ctx.queue(), data.as_slice());
+        let write_result = target.write_data(ctx.gpu_queue(), data.as_slice());
 
         if write_result.is_ok() {
             // success, atlas now contains the bitmap
@@ -430,7 +428,7 @@ impl Style for TextCosmic<'static> {
                 color_transformation: None,
                 color_offset: None,
             },
-            ctx.device(),
+            ctx.gpu_device(),
         );
     }
 }

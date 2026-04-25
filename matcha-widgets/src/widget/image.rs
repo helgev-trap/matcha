@@ -1,19 +1,15 @@
-use crate::style::Style;
-use matcha_core::context::WidgetContext;
-use matcha_core::{
-    device_input::DeviceInput,
-    metrics::{Arrangement, Constraints},
-    ui::{
-        AnyWidgetFrame, Background, Dom, Widget, WidgetFrame,
-        widget::{AnyWidget, InvalidationHandle},
-    },
+use matcha_core::event::device_event::DeviceEvent;
+use matcha_core::tree_app::{
+    context::UiContext,
+    metrics::Constraints,
+    widget::{View, Widget, WidgetInteractionResult, WidgetPod},
 };
 use renderer::render_node::RenderNode;
 
+use crate::style::Style as _;
 use crate::{style, types::size::Size};
-use nalgebra::Matrix4;
 
-// MARK: DOM
+// MARK: View
 
 pub struct Image {
     label: Option<String>,
@@ -39,125 +35,82 @@ impl Image {
     }
 }
 
-#[async_trait::async_trait]
-impl<T: Send + Sync + 'static> Dom<T> for Image {
-    fn build_widget_tree(&self) -> Box<dyn AnyWidgetFrame<T>> {
-        Box::new(WidgetFrame::new(
-            self.label.clone(),
-            vec![],
-            vec![],
-            ImageNode {
+impl View for Image {
+    fn build(&self, _ctx: &UiContext) -> WidgetPod {
+        let mut pod = WidgetPod::new(
+            0usize,
+            ImageWidget {
                 image_style: self.image_style.clone(),
             },
-        ))
+        );
+        if let Some(label) = &self.label {
+            pod = pod.with_label(label.clone());
+        }
+        pod
     }
 }
 
 // MARK: Widget
 
-#[derive(Clone)]
-pub struct ImageNode {
+pub struct ImageWidget {
     image_style: style::image::Image,
 }
 
-impl<T: Send + Sync + 'static> Widget<Image, T, ()> for ImageNode {
-    fn update_widget<'a>(
-        &mut self,
-        dom: &'a Image,
-        cache_invalidator: Option<InvalidationHandle>,
-    ) -> Vec<(&'a dyn Dom<T>, (), u128)> {
-        // A proper implementation would require making the key public or implementing PartialEq.
-        if self.image_style != dom.image_style {
-            if let Some(handle) = cache_invalidator {
-                handle.relayout_next_frame();
-            }
+impl Widget for ImageWidget {
+    type View = Image;
+
+    fn update(&mut self, view: &Image, _ctx: &UiContext) -> WidgetInteractionResult {
+        if self.image_style != view.image_style {
+            self.image_style = view.image_style.clone();
+            WidgetInteractionResult::LayoutNeeded
+        } else {
+            WidgetInteractionResult::NoChange
         }
-        self.image_style = dom.image_style.clone();
-        vec![]
-    }
-
-    fn measure(
-        &self,
-        constraints: &Constraints,
-        _children: &[(&dyn AnyWidget<T>, &())],
-        ctx: &WidgetContext,
-    ) -> [f32; 2] {
-        let size = self
-            .image_style
-            .required_region(constraints, ctx)
-            .unwrap_or_default();
-
-        [size.max_x(), size.max_y()]
-    }
-
-    fn arrange(
-        &self,
-        _bounds: [f32; 2],
-        _children: &[(&dyn AnyWidget<T>, &())],
-        _ctx: &WidgetContext,
-    ) -> Vec<Arrangement> {
-        vec![]
     }
 
     fn device_input(
         &mut self,
         _bounds: [f32; 2],
-        _event: &DeviceInput,
-        _children: &mut [(&mut dyn AnyWidget<T>, &mut (), &Arrangement)],
-        _cache_invalidator: InvalidationHandle,
-        _ctx: &WidgetContext,
-    ) -> Option<T> {
-        None
+        _event: &DeviceEvent,
+        _ctx: &UiContext,
+    ) -> WidgetInteractionResult {
+        WidgetInteractionResult::NoChange
     }
 
-    fn is_inside(
-        &self,
-        bounds: [f32; 2],
-        position: [f32; 2],
-        _children: &[(&dyn AnyWidget<T>, &(), &Arrangement)],
-        _ctx: &WidgetContext,
-    ) -> bool {
-        position[0] >= 0.0
-            && position[0] <= bounds[0]
-            && position[1] >= 0.0
-            && position[1] <= bounds[1]
+    fn measure(&self, constraints: &Constraints, ctx: &UiContext) -> [f32; 2] {
+        self.image_style
+            .required_region(constraints, ctx)
+            .map(|r| r.size())
+            .unwrap_or([0.0, 0.0])
     }
 
-    fn render(
-        &self,
-        _bounds: [f32; 2],
-        _children: &[(&dyn AnyWidget<T>, &(), &Arrangement)],
-        _background: Background,
-        ctx: &WidgetContext,
-    ) -> RenderNode {
-        let mut render_node = RenderNode::new();
-        let size = <Self as Widget<Image, T, ()>>::measure(
-            self,
-            &Constraints::new([0.0f32, f32::INFINITY], [0.0f32, f32::INFINITY]),
-            &[],
-            ctx,
-        );
-
-        if size[0] > 0.0 && size[1] > 0.0 {
-            let texture_size = [size[0].ceil() as u32, size[1].ceil() as u32];
-            if let Ok(style_region) =
-                ctx.texture_atlas()
-                    .allocate(&ctx.device(), &ctx.queue(), texture_size)
-            {
-                let mut encoder =
-                    ctx.device()
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("Image Render Encoder"),
-                        });
-
-                self.image_style
-                    .draw(&mut encoder, &style_region, size, [0.0, 0.0], ctx);
-
-                ctx.queue().submit(Some(encoder.finish()));
-                render_node = render_node.with_texture(style_region, size, Matrix4::identity())
-            }
+    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode {
+        let constraints = Constraints::from_boundary(bounds);
+        let Some(rect) = self.image_style.required_region(&constraints, ctx) else {
+            return RenderNode::new();
+        };
+        let size = rect.size();
+        if size[0] <= 0.0 || size[1] <= 0.0 {
+            return RenderNode::new();
         }
 
-        render_node
+        let texture_size = [size[0].ceil() as u32, size[1].ceil() as u32];
+        let Ok(style_region) = ctx
+            .texture_atlas()
+            .allocate(ctx.gpu_device(), ctx.gpu_queue(), texture_size)
+        else {
+            return RenderNode::new();
+        };
+
+        let mut encoder =
+            ctx.gpu_device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Image Render Encoder"),
+                });
+
+        self.image_style.draw(&mut encoder, &style_region, size, [0.0, 0.0], ctx);
+        ctx.gpu_queue().submit(Some(encoder.finish()));
+
+        RenderNode::new().with_texture(style_region, size, nalgebra::Matrix4::identity())
     }
 }

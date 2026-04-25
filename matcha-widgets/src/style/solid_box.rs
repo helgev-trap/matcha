@@ -2,24 +2,32 @@ use crate::style::Style;
 use gpu_utils::texture_atlas::atlas_simple::atlas::AtlasRegion;
 use matcha_core::{
     color::Color,
-    context::WidgetContext,
-    metrics::{Constraints, QRect},
+    tree_app::{
+        context::UiContext,
+        metrics::{Constraints, QRect},
+    },
 };
 use renderer::{
     vertex::colored_vertex::ColorVertex,
     widgets_renderer::vertex_color::{RenderData, TargetData, VertexColor},
 };
 
-// todo: more documentation
-
-// MARK: Style
-
 pub struct SolidBox {
     pub color: Color,
+    renderer: VertexColor,
+}
+
+impl SolidBox {
+    pub fn new(color: Color) -> Self {
+        Self {
+            color,
+            renderer: VertexColor::default(),
+        }
+    }
 }
 
 impl Style for SolidBox {
-    fn required_region(&self, constraints: &Constraints, _ctx: &WidgetContext) -> Option<QRect> {
+    fn required_region(&self, constraints: &Constraints, _ctx: &UiContext) -> Option<QRect> {
         let max = constraints.max_size();
         if max[0] > 0.0 && max[1] > 0.0 {
             Some(QRect::new([0.0, 0.0], max))
@@ -28,7 +36,7 @@ impl Style for SolidBox {
         }
     }
 
-    fn is_inside(&self, position: [f32; 2], boundary_size: [f32; 2], _ctx: &WidgetContext) -> bool {
+    fn is_inside(&self, position: [f32; 2], boundary_size: [f32; 2], _ctx: &UiContext) -> bool {
         position[0] >= 0.0
             && position[0] <= boundary_size[0]
             && position[1] >= 0.0
@@ -41,13 +49,11 @@ impl Style for SolidBox {
         target: &AtlasRegion,
         boundary_size: [f32; 2],
         offset: [f32; 2],
-        ctx: &WidgetContext,
+        ctx: &UiContext,
     ) {
         let target_size = target.texture_size();
         let target_format = target.format();
-        let renderer = ctx.any_resource().get_or_insert_default::<VertexColor>();
 
-        // create a render pass targeting the atlas region so implementations can use multiple passes if needed
         let mut render_pass = match target.begin_render_pass(encoder) {
             Ok(rp) => rp,
             Err(_) => return,
@@ -74,7 +80,7 @@ impl Style for SolidBox {
 
         let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
-        renderer.render(
+        self.renderer.render(
             &mut render_pass,
             TargetData {
                 target_size,
@@ -87,7 +93,7 @@ impl Style for SolidBox {
                     offset[0], offset[1], 0.0,
                 )),
             },
-            &ctx.device(),
+            ctx.gpu_device(),
         );
     }
 }
