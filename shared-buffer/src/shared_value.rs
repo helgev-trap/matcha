@@ -10,8 +10,7 @@ use super::context::BufferContext;
 
 /// Determines which [`BufferContext`] a [`SharedValue`] signals on `store()`.
 enum SignalContext {
-    /// Looks up the global context on each `store()`.
-    /// Before `init_global()` is called, signaling is a no-op.
+    /// Uses the global context (lazily initialized).
     Global,
     /// A fixed custom context supplied at construction time.
     Custom(Arc<BufferContext>),
@@ -19,14 +18,11 @@ enum SignalContext {
 
 impl SignalContext {
     fn signal(&self) {
-        match self {
-            Self::Global => {
-                if let Some(ctx) = BufferContext::try_global() {
-                    ctx.signal();
-                }
-            }
-            Self::Custom(ctx) => ctx.signal(),
-        }
+        let ctx = match self {
+            Self::Global => BufferContext::global(),
+            Self::Custom(ctx) => ctx,
+        };
+        ctx.signal();
     }
 }
 
@@ -45,7 +41,6 @@ impl SignalContext {
 ///
 /// ```rust
 /// let v = SharedValue::new(0.0f32);
-/// // Safe to call before the event loop starts; the signal is a no-op until then.
 /// v.store(1.0);
 /// ```
 ///
@@ -62,8 +57,6 @@ pub struct SharedValue<T: Send + Sync + 'static> {
 
 impl<T: Send + Sync + 'static> SharedValue<T> {
     /// Creates a `SharedValue` backed by the global context.
-    ///
-    /// Safe to call before [`BufferContext::init_global()`].
     pub fn new(value: T) -> Self {
         Self {
             inner: ArcSwap::from_pointee(value),

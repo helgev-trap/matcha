@@ -1,6 +1,4 @@
-use std::sync::{mpsc, Arc, OnceLock};
-
-use parking_lot::Mutex;
+use std::sync::{Arc, LazyLock};
 
 // ---------------------------------------------------------------------------
 // BufferContext
@@ -8,15 +6,13 @@ use parking_lot::Mutex;
 
 /// Shared notification context for all [`SharedValue`](super::SharedValue) instances.
 ///
-/// All buffers created from the same context share a single channel, so any
+/// All buffers created from the same context share a single notifier, so any
 /// write to any buffer triggers the same event-loop wakeup signal.
-///
-/// Holds both ends of the channel, keeping signal sending and waiting in one place.
 ///
 /// # Global context
 ///
-/// The typical usage is the global instance obtained via [`BufferContext::global()`],
-/// initialized once by calling [`BufferContext::init_global()`].
+/// The global instance is lazily initialized on first access via [`BufferContext::global()`].
+/// No explicit initialization call is required.
 ///
 /// # Custom context
 ///
@@ -24,69 +20,43 @@ use parking_lot::Mutex;
 /// a custom instance with [`BufferContext::new()`] and pass it to
 /// [`SharedValue::new_in()`](super::SharedValue::new_in).
 pub struct BufferContext {
-    tx: mpsc::SyncSender<()>,
-    /// `Receiver` is not `Sync`, so it is wrapped in a `Mutex`.
-    /// Only the bridge thread calls `wait_for_signal()`, so lock contention never occurs.
-    rx: Mutex<mpsc::Receiver<()>>,
+    notify: tokio::sync::Notify,
 }
 
-static GLOBAL: OnceLock<Arc<BufferContext>> = OnceLock::new();
+static GLOBAL: LazyLock<Arc<BufferContext>> = LazyLock::new(BufferContext::new);
 
 impl BufferContext {
-    /// Creates a new context backed by a capacity-1 bounded channel.
+    /// Creates a new isolated context.
     ///
-    /// Use this when you need an isolated notification group.
-    /// For the common case, prefer [`init_global()`](Self::init_global).
+    /// For the common case, prefer [`global()`](Self::global).
     pub fn new() -> Arc<Self> {
-        let (tx, rx) = mpsc::sync_channel::<()>(1);
         Arc::new(Self {
-            tx,
-            rx: Mutex::new(rx),
+            notify: tokio::sync::Notify::new(),
         })
-    }
-
-    /// Initializes the global context.
-    ///
-    /// Call once after the winit `EventLoopProxy` has been obtained.
-    /// Subsequent calls are silently ignored.
-    pub fn init_global() {
-        GLOBAL.set(Self::new()).ok();
     }
 
     /// Returns a reference to the global context.
     ///
-    /// Panics if [`init_global()`](Self::init_global) has not been called yet.
-    /// Use [`SharedValue::new()`](super::SharedValue::new) to safely create buffers
-    /// before the event loop starts; `store()` is a no-op for signals until then.
+    /// Initialized automatically on first access.
     pub fn global() -> &'static Arc<BufferContext> {
-        GLOBAL.get().expect(
-            "BufferContext is not initialized. \
-             Call BufferContext::init_global() before using SharedValue::store().",
-        )
-    }
-
-    /// Returns the global context, or `None` if not yet initialized.
-    ///
-    /// Used internally by [`SharedValue`](super::SharedValue).
-    pub(crate) fn try_global() -> Option<&'static Arc<BufferContext>> {
-        GLOBAL.get()
+        &GLOBAL
     }
 }
 
 impl BufferContext {
-    /// Sends a wakeup signal. Non-blocking.
+    /// Sends a wakeup signal. Non-blocking, callable from any thread.
     ///
-    /// If the channel is already full (a signal is pending), the send is dropped.
-    /// This coalesces multiple rapid writes into a single wakeup.
+    /// If a signal is already pending (no one has called `notified()` yet),
+    /// it is coalesced — at most one wakeup is queued at a time.
     pub(crate) fn signal(&self) {
-        self.tx.try_send(()).ok();
+        self.notify.notify_one();
     }
 
-    /// Blocks until a signal is received.
+    /// Waits asynchronously until a signal is received.
     ///
-    /// The bridge thread calls this in a loop to forward signals to the event loop.
-    /// Returns `false` when all senders have been dropped, allowing the loop to exit.
-    pub fn wait_for_signal(&self) -> bool {
-        self.rx.lock().recv().is_ok()
+    /// The bridge task calls this in a `select!` loop to forward signals to
+    /// the event loop.
+    pub async fn notified(&self) {
+        self.notify.notified().await
     }
 }
