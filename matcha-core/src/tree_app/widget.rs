@@ -4,7 +4,7 @@ use renderer::render_node::RenderNode;
 
 use super::metrics;
 use crate::tree_app::context::UiContext;
-use crate::event::device_event::DeviceEvent;
+use matcha_window::event::device_event::DeviceEvent;
 
 // ----------------------------------------------------------------------------
 // Types

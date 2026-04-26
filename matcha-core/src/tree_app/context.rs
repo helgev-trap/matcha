@@ -5,8 +5,9 @@ use std::sync::Weak;
 use std::{any::Any, sync::Arc};
 
 use super::window::AnyWindowWidgetInstance;
-use crate::window::{Window, WindowConfig, WindowError};
-use crate::{adapter::EventLoop, window::WindowId};
+use matcha_window::window::{Window, WindowConfig, WindowError};
+use matcha_window::adapter::EventLoop;
+use matcha_window::window::WindowId;
 
 // ----------------------------------------------------------------------------
 // EventSender / EventReceiver

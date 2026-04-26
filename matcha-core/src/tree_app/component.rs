@@ -3,14 +3,13 @@ use std::sync::Arc;
 use renderer::RenderNode;
 
 use super::widget::{View, Widget, WidgetInteractionResult, WidgetPod};
-use crate::{
-    event::{device_event::DeviceEvent, window_event::WindowEvent},
-    tree_app::{
-        context::{AppContext, UiContext},
-        metrics,
-        widget::WidgetUpdateError,
-    }, window::WindowId,
+use crate::tree_app::{
+    context::{AppContext, UiContext},
+    metrics,
+    widget::WidgetUpdateError,
 };
+use matcha_window::event::{device_event::DeviceEvent, window_event::WindowEvent};
+use matcha_window::window::WindowId;
 
 // ----------------------------------------------------------------------------
 // Component

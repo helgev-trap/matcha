@@ -7,7 +7,7 @@ members = [
     "text-render",
     "utils",
     "gpu-utils",
-    "shared-buffer",
+    "shared-buffer", "matcha-window",
 ]
 resolver = "3"
 
@@ -18,6 +18,7 @@ version = "0.0.5"
 # self
 matcha = { path = "matcha" }
 matcha-core = { path = "matcha-core" }
+matcha-window = { path = "matcha-window" }
 matcha-widgets = { path = "matcha-widgets" }
 shared-buffer = { path = "shared-buffer" }
 renderer = { path = "renderer" }

@@ -1,15 +1,15 @@
 [package]
-name = "matcha-core"
-version = { workspace = true }
+name = "matcha-window"
 edition = "2024"
-publish = false
+version.workspace = true
 
 [dependencies]
 # self
-renderer = { workspace = true }
 utils = { workspace = true }
 gpu-utils = { workspace = true }
 shared-buffer = { workspace = true }
+
+wgpu = { workspace = true }
 
 # async runtime, utility
 tokio = { workspace = true }
@@ -17,19 +17,12 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 parking_lot = { workspace = true }
 
-# window
-matcha-window = { workspace = true }
-
-# graphics
-wgpu = { workspace = true }
-bytemuck = { features = ["derive"], workspace = true }
-vello = { workspace = true }
+# winit
+winit = { workspace = true, optional = true }
+baseview = { workspace = true, optional = true }
 
 # math
 nalgebra = { features = ["bytemuck"], workspace = true }
-
-# image
-image = { workspace = true }
 
 # other
 bitflags = { workspace = true }
@@ -43,8 +36,8 @@ enum-map = "2.7.3"
 
 [features]
 default = ["winit"]
-winit = ["matcha-window/winit"]
-baseview = ["matcha-window/baseview"]
+winit = ["dep:winit"]
+baseview = ["dep:baseview"]
 
 [lints]
 workspace = true

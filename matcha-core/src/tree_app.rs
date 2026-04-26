@@ -9,12 +9,12 @@ use dashmap::DashMap;
 use parking_lot::Mutex;
 use std::sync::{Arc, OnceLock, Weak};
 
-use crate::adapter::{EventLoop, EventLoopProxy};
-use crate::application::Application;
-use crate::event::device_event::DeviceEvent;
-use crate::event::raw_device_event::{RawDeviceEvent, RawDeviceId};
-use crate::event::window_event::WindowEvent;
-use crate::window::WindowId;
+use matcha_window::adapter::{EventLoop, EventLoopProxy};
+use matcha_window::application::Application;
+use matcha_window::event::device_event::DeviceEvent;
+use matcha_window::event::raw_device_event::{RawDeviceEvent, RawDeviceId};
+use matcha_window::event::window_event::WindowEvent;
+use matcha_window::window::WindowId;
 
 use component::{Component, ComponentPod};
 use context::{AppContext, EventReceiver, EventSender, SharedCtx, UiContext};

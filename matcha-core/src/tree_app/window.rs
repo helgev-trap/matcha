@@ -3,15 +3,13 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use renderer::RenderNode;
 
-use crate::{
-    event::device_event::DeviceEvent,
-    tree_app::{
-        context::{UiContext, WindowCtx},
-        metrics,
-        widget::{View, Widget, WidgetInteractionResult, WidgetPod, WidgetUpdateError},
-    },
-    window::{Window as OsWindow, WindowConfig, WindowId},
+use crate::tree_app::{
+    context::{UiContext, WindowCtx},
+    metrics,
+    widget::{View, Widget, WidgetInteractionResult, WidgetPod, WidgetUpdateError},
 };
+use matcha_window::event::device_event::DeviceEvent;
+use matcha_window::window::{Window as OsWindow, WindowConfig, WindowId};
 
 // ------
 // Window
