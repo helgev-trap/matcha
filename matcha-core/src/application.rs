@@ -27,6 +27,10 @@ pub trait Application: Send + Sync + 'static {
 
     // rendering methods — no event_loop, spawnable in parallel
     async fn render(&self, runtime: &tokio::runtime::Handle, window_id: WindowId);
+    fn request_redraw(&self, runtime: &tokio::runtime::Handle, window_id: WindowId) {
+        let _ = runtime;
+        let _ = window_id;
+    }
 
     // event methods
     fn window_event(

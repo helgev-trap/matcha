@@ -1,16 +1,7 @@
+use crate::adapter::EventLoop;
+
 pub mod window_config;
 pub use window_config::*;
-
-// --- Backend Abstraction Trait ---
-
-pub trait WindowControler {
-    fn create_native_window(
-        &self,
-        config: &WindowConfig,
-        instance: &wgpu::Instance,
-        device: &wgpu::Device,
-    ) -> Result<WindowSurface, WindowError>;
-}
 
 // --- Common Types ---
 
@@ -21,22 +12,20 @@ pub struct WindowId {
 
 pub struct Window {
     config: WindowConfig,
-    window_id: WindowId,
-    window_surface: Option<WindowSurface>,
+    window_surface: WindowSurface,
 }
 
 impl Window {
+    /// Creates the native window. The wgpu surface is not attached yet.
+    /// Call [`create_surface`](Self::create_surface) before rendering.
     pub fn new(
         config: &WindowConfig,
-        ctrl: &dyn WindowControler,
-        instance: &wgpu::Instance,
-        device: &wgpu::Device,
+        ctrl: &dyn EventLoop,
     ) -> Result<Self, WindowError> {
-        let window_surface = ctrl.create_native_window(&config, instance, device)?;
+        let window_surface = ctrl.create_window(config)?;
         Ok(Self {
             config: config.clone(),
-            window_id: window_surface.id(),
-            window_surface: Some(window_surface),
+            window_surface,
         })
     }
 
@@ -45,29 +34,23 @@ impl Window {
     }
 
     pub fn has_surface(&self) -> bool {
-        self.window_surface.is_some()
+        self.window_surface.has_surface()
     }
 
-    /// Discard the native window surface (e.g. on `Suspended`).
-    /// The window config is retained so `enable` can recreate the surface later.
-    pub fn disable(&mut self) {
-        self.window_surface = None;
-    }
-
-    /// Recreate the native window surface (e.g. on `Resumed`).
-    /// Does nothing if the surface already exists.
-    pub fn enable(
+    /// Creates and attaches the wgpu surface. Does nothing if already present.
+    pub fn create_surface(
         &mut self,
-        ctrl: &dyn WindowControler,
         instance: &wgpu::Instance,
-        device: &wgpu::Device
+        device: &wgpu::Device,
     ) -> Result<(), WindowError> {
-        if self.window_surface.is_some() {
-            return Ok(());
-        }
-        let surface = ctrl.create_native_window(&self.config, instance, device)?;
-        self.window_surface = Some(surface);
-        Ok(())
+        self.window_surface
+            .create_surface(instance, device)
+            .map_err(|e| WindowError::BackendError(e.to_string()))
+    }
+
+    /// Detaches and drops the wgpu surface, keeping the native window alive.
+    pub fn destroy_surface(&mut self) {
+        self.window_surface.destroy_surface();
     }
 }
 
@@ -86,197 +69,158 @@ pub enum WindowError {
 // pure delegations with no backend imports required.
 impl Window {
     pub fn id(&self) -> WindowId {
-        self.window_id
+        self.window_surface.id()
     }
 
     // --- Title ---
 
-    pub fn title(&self) -> Option<String> {
-        self.window_surface.as_ref().map(|s| s.title())
+    pub fn title(&self) -> String {
+        self.window_surface.title()
     }
 
     pub fn set_title(&self, title: &str) {
-        if let Some(s) = &self.window_surface {
-            s.set_title(title);
-        }
+        self.window_surface.set_title(title);
     }
 
     // --- Size ---
 
-    /// Returns the inner (client area) size in physical pixels, or `None` if
-    /// the window has no surface (e.g. minimised / disabled).
-    pub fn inner_size(&self) -> Option<[u32; 2]> {
-        self.window_surface.as_ref().map(|s| s.inner_size())
+    /// Returns the inner (client area) size in physical pixels.
+    pub fn inner_size(&self) -> [u32; 2] {
+        self.window_surface.inner_size()
     }
 
     pub fn request_inner_size(&self, width: u32, height: u32) {
-        if let Some(s) = &self.window_surface {
-            s.request_inner_size(width, height);
-        }
+        self.window_surface.request_inner_size(width, height);
     }
 
     /// Returns the outer (including decorations) size in physical pixels.
-    pub fn outer_size(&self) -> Option<[u32; 2]> {
-        self.window_surface.as_ref().map(|s| s.outer_size())
+    pub fn outer_size(&self) -> [u32; 2] {
+        self.window_surface.outer_size()
     }
 
     pub fn set_min_inner_size(&self, min_size: Option<window_config::Size>) {
-        if let Some(s) = &self.window_surface {
-            s.set_min_inner_size(min_size);
-        }
+        self.window_surface.set_min_inner_size(min_size);
     }
 
     pub fn set_max_inner_size(&self, max_size: Option<window_config::Size>) {
-        if let Some(s) = &self.window_surface {
-            s.set_max_inner_size(max_size);
-        }
+        self.window_surface.set_max_inner_size(max_size);
     }
 
     /// Returns the resize increment hint in physical pixels, if set.
     pub fn resize_increments(&self) -> Option<[u32; 2]> {
-        self.window_surface
-            .as_ref()
-            .and_then(|s| s.resize_increments())
+        self.window_surface.resize_increments()
     }
 
     pub fn set_resize_increments(&self, increments: Option<window_config::Size>) {
-        if let Some(s) = &self.window_surface {
-            s.set_resize_increments(increments);
-        }
+        self.window_surface.set_resize_increments(increments);
     }
 
     // --- Position ---
 
     /// Returns the inner position (top-left of client area) in physical pixels,
-    /// or `None` if unsupported on this platform or no surface is present.
+    /// or `None` if unsupported on this platform.
     pub fn inner_position(&self) -> Option<[i32; 2]> {
-        self.window_surface
-            .as_ref()
-            .and_then(|s| s.inner_position())
+        self.window_surface.inner_position()
     }
 
     /// Returns the outer position (top-left including decorations) in physical
-    /// pixels, or `None` if unsupported or no surface is present.
+    /// pixels, or `None` if unsupported.
     pub fn outer_position(&self) -> Option<[i32; 2]> {
-        self.window_surface
-            .as_ref()
-            .and_then(|s| s.outer_position())
+        self.window_surface.outer_position()
     }
 
     pub fn set_outer_position(&self, position: window_config::Position) {
-        if let Some(s) = &self.window_surface {
-            s.set_outer_position(position);
-        }
+        self.window_surface.set_outer_position(position);
     }
 
     // --- Window state ---
 
-    pub fn is_maximized(&self) -> Option<bool> {
-        self.window_surface.as_ref().map(|s| s.maximized())
+    pub fn is_maximized(&self) -> bool {
+        self.window_surface.maximized()
     }
 
     pub fn set_maximized(&self, maximized: bool) {
-        if let Some(s) = &self.window_surface {
-            s.set_maximized(maximized);
-        }
+        self.window_surface.set_maximized(maximized);
     }
 
     pub fn fullscreen(&self) -> Option<window_config::Fullscreen> {
-        self.window_surface.as_ref().and_then(|s| s.fullscreen())
+        self.window_surface.fullscreen()
     }
 
     pub fn set_fullscreen(&self, fullscreen: Option<window_config::Fullscreen>) {
-        if let Some(s) = &self.window_surface {
-            s.set_fullscreen(fullscreen);
-        }
+        self.window_surface.set_fullscreen(fullscreen);
     }
 
-    pub fn is_resizable(&self) -> Option<bool> {
-        self.window_surface.as_ref().map(|s| s.is_resizable())
+    pub fn is_resizable(&self) -> bool {
+        self.window_surface.is_resizable()
     }
 
     pub fn set_resizable(&self, resizable: bool) {
-        if let Some(s) = &self.window_surface {
-            s.set_resizable(resizable);
-        }
+        self.window_surface.set_resizable(resizable);
     }
 
-    pub fn is_decorated(&self) -> Option<bool> {
-        self.window_surface.as_ref().map(|s| s.is_decorated())
+    pub fn is_decorated(&self) -> bool {
+        self.window_surface.is_decorated()
     }
 
     pub fn set_decorations(&self, decorations: bool) {
-        if let Some(s) = &self.window_surface {
-            s.set_decorations(decorations);
-        }
+        self.window_surface.set_decorations(decorations);
     }
 
     pub fn is_visible(&self) -> Option<bool> {
-        self.window_surface.as_ref().and_then(|s| s.is_visible())
+        self.window_surface.is_visible()
     }
 
     pub fn set_visible(&self, visible: bool) {
-        if let Some(s) = &self.window_surface {
-            s.set_visible(visible);
-        }
+        self.window_surface.set_visible(visible);
     }
 
     // --- Appearance ---
 
     pub fn theme(&self) -> Option<window_config::Theme> {
-        self.window_surface.as_ref().and_then(|s| s.theme())
+        self.window_surface.theme()
     }
 
     pub fn set_theme(&self, theme: Option<window_config::Theme>) {
-        if let Some(s) = &self.window_surface {
-            s.set_theme(theme);
-        }
+        self.window_surface.set_theme(theme);
     }
 
-    pub fn enabled_buttons(&self) -> Option<window_config::WindowButtons> {
-        self.window_surface.as_ref().map(|s| s.enabled_buttons())
+    pub fn enabled_buttons(&self) -> window_config::WindowButtons {
+        self.window_surface.enabled_buttons()
     }
 
     pub fn set_enabled_buttons(&self, buttons: window_config::WindowButtons) {
-        if let Some(s) = &self.window_surface {
-            s.set_enabled_buttons(buttons);
-        }
+        self.window_surface.set_enabled_buttons(buttons);
     }
 
     // --- DPI / surface format ---
 
-    pub fn dpi(&self) -> Option<f64> {
-        self.window_surface.as_ref().map(|s| s.dpi())
+    pub fn dpi(&self) -> f64 {
+        self.window_surface.dpi()
     }
 
-    pub fn format(&self) -> Option<wgpu::TextureFormat> {
-        self.window_surface.as_ref().map(|s| s.format())
+    /// Returns the configured surface texture format.
+    /// The format is retained even when no surface is attached.
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.window_surface.format()
     }
 
     pub fn change_format(&self, device: &wgpu::Device, format: wgpu::TextureFormat) {
-        if let Some(s) = &self.window_surface {
-            s.change_format(device, format);
-        }
+        self.window_surface.change_format(device, format);
     }
 
     // --- Surface access ---
 
-    pub fn surface(&self) -> Option<&WindowSurface> {
-        self.window_surface.as_ref()
+    pub fn surface(&self) -> &WindowSurface {
+        &self.window_surface
     }
 
-    pub fn surface_mut(&self) -> Option<&WindowSurface> {
-        self.window_surface.as_ref()
-    }
-
-    pub fn window_id(&self) -> Option<WindowId> {
-        self.window_surface.as_ref().map(|s| s.window_id())
+    pub fn surface_mut(&mut self) -> &mut WindowSurface {
+        &mut self.window_surface
     }
 
     pub fn request_redraw(&self) {
-        if let Some(s) = &self.window_surface {
-            s.request_redraw();
-        }
+        self.window_surface.request_redraw();
     }
 }
 

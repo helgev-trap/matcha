@@ -8,7 +8,7 @@ use crate::{
         raw_device_event::{RawDeviceEvent, RawDeviceId},
         window_event::{WindowEvent, WindowEventState},
     },
-    window::WindowId,
+    window::{WindowConfig, WindowError, WindowId, WindowSurface},
 };
 
 // ---------------------------------------------------------------------------
@@ -102,7 +102,11 @@ impl<App: Application> Adapter<App> {
     ///
     /// `Arc::get_mut` is guaranteed to succeed here because no rendering tasks
     /// have been spawned yet and no other `Arc` clones exist.
-    pub fn init(&mut self, proxy: Box<dyn EventLoopProxy<App> + Send>, event_loop: &impl EventLoop) {
+    pub fn init(
+        &mut self,
+        proxy: Box<dyn EventLoopProxy<App> + Send>,
+        event_loop: &impl EventLoop,
+    ) {
         let app = Arc::get_mut(&mut self.app)
             .expect("Adapter::init must be called before any Arc clones are created");
         let _guard = self.tokio_runtime.enter();
@@ -147,6 +151,9 @@ impl<App: Application> Adapter<App> {
             if handle.is_finished() {
                 self.rendering_window.remove(&window_id);
             } else {
+                // request redraw again to catch up latest redraw request
+                self.app
+                    .request_redraw(self.tokio_runtime.handle(), window_id);
                 return;
             }
         }
@@ -227,7 +234,6 @@ impl<App: Application> Adapter<App> {
     }
 }
 
-
 /// Polling
 impl<App: Application> Adapter<App> {
     pub fn poll(&mut self, event_loop: &impl EventLoop) {
@@ -265,7 +271,7 @@ impl<App: Application> Adapter<App> {
         );
     }
 
-    pub fn about_to_wait(&self, event_loop: &impl EventLoop) {
+    pub fn about_to_wait(&mut self, event_loop: &impl EventLoop) {
         let _guard = self.tokio_runtime.enter();
         self.app
             .about_to_wait(self.tokio_runtime.handle(), event_loop);
@@ -326,14 +332,23 @@ impl<App: Application> Adapter<App> {
 // API type definition
 // -------------------
 
-pub trait EventLoop: crate::window::WindowControler {
-    // `create_window` is inherited from `WindowControler` trait
-    // Todo: fn create_custom_cursor(&self);
-    // Todo: fn available_monitors(&self);
-    // Todo: fn primary_monitor(&self);
-    // Todo: fn listen_device_events
+pub trait EventLoop {
+    /// Creates the native window only. The wgpu surface is not yet attached.
+    /// Call [`Window::create_surface`](crate::window::Window::create_surface) separately.
+    fn create_window(
+        &self,
+        config: &WindowConfig,
+    ) -> Result<WindowSurface, WindowError>;
 
+    // Todo: fn create_custom_cursor(&self) -> CustomCursor;
+    // Todo: fn available_monitors(&self) -> impl Iterator<Item = MonitorHandle>;
+    // Todo: fn primary_monitor(&self) -> Option<MonitorHandle>;
+    // Todo: fn listen_device_events(&self, allowed: DeviceEvents);
+    // Todo: fn system_theme(&self) -> Option<Theme>
+
+    fn set_control_flow(&self, control_flow: ControlFlow);
     fn control_flow(&self) -> ControlFlow;
+    fn exit(&self);
     fn exiting(&self) -> bool;
 }
 

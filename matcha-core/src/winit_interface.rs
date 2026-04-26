@@ -2,7 +2,7 @@ use crate::{
     adapter::{Adapter, ControlFlow, EventLoop, EventLoopCommand, EventLoopProxy},
     application::Application,
     event::device_event::{ElementState, KeyInput, KeyboardState},
-    window::WindowId,
+    window::{WindowConfig, WindowError, WindowId, WindowSurface},
 };
 
 // ---------------------------------------------------------------------------
@@ -47,7 +47,8 @@ impl<App: Application> winit::application::ApplicationHandler<WinitUserMessage<A
     ) {
         match cause {
             winit::event::StartCause::Init => {
-                self.adapter.init(self.event_loop_proxy.clone_box(), event_loop);
+                self.adapter
+                    .init(self.event_loop_proxy.clone_box(), event_loop);
             }
             winit::event::StartCause::Poll => {
                 self.adapter.poll(event_loop);
@@ -362,8 +363,24 @@ pub(crate) enum WinitUserMessage<App: Application> {
 // ---------------------------------------------------------------------------
 
 impl EventLoop for winit::event_loop::ActiveEventLoop {
+    fn create_window(
+        &self,
+        config: &WindowConfig,
+    ) -> Result<WindowSurface, WindowError> {
+        WindowSurface::new(self, config)
+            .map_err(|e| WindowError::BackendError(e.to_string()))
+    }
+
+    fn set_control_flow(&self, control_flow: ControlFlow) {
+        self.set_control_flow(control_flow.into());
+    }
+
     fn control_flow(&self) -> ControlFlow {
         self.control_flow().into()
+    }
+
+    fn exit(&self) {
+        self.exit()
     }
 
     fn exiting(&self) -> bool {

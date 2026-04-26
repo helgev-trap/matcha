@@ -13,47 +13,30 @@ impl From<winit::window::WindowId> for super::WindowId {
     }
 }
 
-// Implement WindowControler for Winit EventLoop
-impl super::WindowControler for winit::event_loop::ActiveEventLoop {
-    fn create_native_window(
-        &self,
-        config: &super::WindowConfig,
-        instance: &wgpu::Instance,
-        device: &wgpu::Device,
-    ) -> Result<WindowSurface, super::WindowError> {
-        let surface = WindowSurface::new(self, config, instance, device)
-            .map_err(|e| super::WindowError::BackendError(e.to_string()))?;
-        Ok(surface)
-    }
-}
-
 pub struct WindowSurface {
     window: Arc<winit::window::Window>,
-    surface: wgpu::Surface<'static>,
-    /// texture size is ensured to be greater than 0
+    surface: Option<wgpu::Surface<'static>>,
+    /// Retained across surface destruction so `create_surface` can reconfigure correctly.
     // TODO: wgpu v28.0.0 can get current config from surface. Fix this in the future.
     current_config: parking_lot::Mutex<wgpu::SurfaceConfiguration>,
 }
 
 /// Constructor
 impl WindowSurface {
+    /// Creates the native window only. The wgpu surface is not attached yet.
+    /// Call [`create_surface`](Self::create_surface) before rendering.
     pub fn new(
         event_loop: &winit::event_loop::ActiveEventLoop,
         config: &super::window_config::WindowConfig,
-        instance: &wgpu::Instance,
-        device: &wgpu::Device,
     ) -> Result<Self, WindowSurfaceError> {
         let window = event_loop
             .create_window(config.to_winit_attributes())
             .map_err(WindowSurfaceError::CreateWindow)?;
 
         let window = Arc::new(window);
-        let surface = instance
-            .create_surface(Arc::clone(&window))
-            .map_err(WindowSurfaceError::CreateWindowSurface)?;
         let (width, height) = window.inner_size().into();
 
-        let surface_config = wgpu::SurfaceConfiguration {
+        let initial_config = wgpu::SurfaceConfiguration {
             width,
             height,
             usage: config.surface_config.usage,
@@ -64,28 +47,54 @@ impl WindowSurface {
             alpha_mode: config.surface_config.alpha_mode,
         };
 
-        surface.configure(device, &surface_config);
-
         Ok(Self {
             window,
-            surface,
-            current_config: parking_lot::Mutex::new(surface_config),
+            surface: None,
+            current_config: parking_lot::Mutex::new(initial_config),
         })
+    }
+
+    /// Creates and attaches the wgpu surface. Does nothing if already present.
+    pub fn create_surface(
+        &mut self,
+        instance: &wgpu::Instance,
+        device: &wgpu::Device,
+    ) -> Result<(), WindowSurfaceError> {
+        if self.surface.is_some() {
+            return Ok(());
+        }
+
+        let surface = instance
+            .create_surface(Arc::clone(&self.window))
+            .map_err(WindowSurfaceError::CreateWindowSurface)?;
+
+        let size = self.window.inner_size();
+        {
+            let mut config = self.current_config.lock();
+            config.width = size.width;
+            config.height = size.height;
+            surface.configure(device, &config);
+        }
+
+        self.surface = Some(surface);
+        Ok(())
+    }
+
+    /// Detaches and drops the wgpu surface, keeping the native window alive.
+    pub fn destroy_surface(&mut self) {
+        self.surface = None;
+    }
+
+    pub fn has_surface(&self) -> bool {
+        self.surface.is_some()
     }
 
     pub fn window(&self) -> &winit::window::Window {
         &self.window
     }
 
-    pub fn window_id(&self) -> super::WindowId {
-        let u64_id: u64 = self.window.id().into();
-        super::WindowId {
-            id: u64_id as usize,
-        }
-    }
-
-    pub fn surface(&self) -> &wgpu::Surface<'_> {
-        &self.surface
+    pub fn surface(&self) -> Option<&wgpu::Surface<'_>> {
+        self.surface.as_ref()
     }
 }
 
@@ -240,10 +249,14 @@ impl WindowSurface {
         self.current_config.lock().format
     }
 
+    /// Updates the surface format. If no surface is attached, only updates the
+    /// stored config so the next `create_surface` uses the new format.
     pub fn change_format(&self, device: &wgpu::Device, format: wgpu::TextureFormat) {
         let mut config = self.current_config.lock();
         config.format = format;
-        self.surface.configure(device, &config);
+        if let Some(surface) = &self.surface {
+            surface.configure(device, &config);
+        }
     }
 }
 
@@ -265,15 +278,15 @@ impl WindowSurface {
                 width: inner_size.width,
                 height: inner_size.height,
             }),
-            min_inner_size: None, // needs mapping if needed
+            min_inner_size: None,
             max_inner_size: None,
             position,
             resizable: self.window.is_resizable(),
-            enabled_buttons: WindowButtons::ALL, // needs mapping if needed
+            enabled_buttons: WindowButtons::ALL,
             maximized: self.window.is_maximized(),
-            fullscreen: None, // needs mapping if needed
+            fullscreen: None,
             visible: self.window.is_visible().unwrap_or(true),
-            transparent: false, // needs mapping
+            transparent: false,
             decorations: self.window.is_decorated(),
             preferred_theme: None,
             resize_increments: None,
@@ -289,12 +302,15 @@ impl WindowSurface {
 
 /// Operations
 impl WindowSurface {
+    /// Updates dimensions in the stored config and reconfigures the surface if present.
     pub fn resize(&self, size: [u32; 2], device: &wgpu::Device) {
         if size[0] != 0 && size[1] != 0 {
             let mut config = self.current_config.lock();
             config.width = size[0];
             config.height = size[1];
-            self.surface.configure(device, &config);
+            if let Some(surface) = &self.surface {
+                surface.configure(device, &config);
+            }
         }
     }
 
@@ -305,7 +321,9 @@ impl WindowSurface {
             let mut config = self.current_config.lock();
             config.width = size.width;
             config.height = size.height;
-            self.surface.configure(device, &config);
+            if let Some(surface) = &self.surface {
+                surface.configure(device, &config);
+            }
         }
     }
 
@@ -356,13 +374,18 @@ impl WindowSurface {
 impl WindowSurface {
     /// Return Value:
     /// - `Ok(Some(texture))`: Success to acquire surface texture.
-    /// - `Ok(None)`: Timeout or when texture size is zero. Frame will be skipped.
+    /// - `Ok(None)`: No surface, timeout, or zero-size texture. Frame will be skipped.
     /// - `Err(wgpu::SurfaceError)`: Other unrecoverable error.
     pub fn get_surface_texture(
         &self,
         device: &wgpu::Device,
     ) -> Result<Option<wgpu::SurfaceTexture>, wgpu::SurfaceError> {
-        match self.surface.get_current_texture() {
+        let surface = match &self.surface {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        match surface.get_current_texture() {
             Ok(texture) => Ok(Some(texture)),
             Err(wgpu::SurfaceError::Timeout) => {
                 log::warn!("Surface texture acquire timed out. Skipping frame.");
@@ -370,15 +393,12 @@ impl WindowSurface {
             }
             Err(wgpu::SurfaceError::Outdated) | Err(wgpu::SurfaceError::Lost) => {
                 log::warn!("Surface is outdated or lost. Reconfiguring and retrying...");
-                // Reconfigure surface
                 let size = self.window.inner_size();
                 if size.width == 0 || size.height == 0 {
-                    // Could not recover valid size (e.g. still minimized or race condition)
                     Ok(None)
                 } else {
                     self.reconfigure(device);
-                    // Retry once
-                    match self.surface.get_current_texture() {
+                    match surface.get_current_texture() {
                         Ok(texture) => Ok(Some(texture)),
                         Err(wgpu::SurfaceError::Timeout) => {
                             log::warn!(
@@ -408,6 +428,4 @@ pub enum WindowSurfaceError {
     CreateWindow(winit::error::OsError),
     #[error("Failed to create window surface")]
     CreateWindowSurface(wgpu::CreateSurfaceError),
-    #[error("Failed to get default surface config")]
-    GetDefaultSurfaceConfig,
 }

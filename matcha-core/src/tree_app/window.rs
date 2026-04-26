@@ -115,15 +115,12 @@ impl WindowWidgetInstance {
     }
 
     pub fn try_update(&mut self, view: &Window, ctx: &UiContext) -> WidgetInteractionResult {
+        let s = self.window.inner_size();
         let window_ctx = WindowCtx {
             dpi: self.window.dpi(),
             format: self.window.format(),
             config: self.window.config().clone(),
-            inner_size: self
-                .window
-                .inner_size()
-                .map(|s| [s[0] as f32, s[1] as f32])
-                .unwrap_or([0.0, 0.0]),
+            inner_size: [s[0] as f32, s[1] as f32],
         };
         let ctx = UiContext {
             event_loop: ctx.event_loop,
@@ -165,22 +162,17 @@ impl AnyWindowWidgetInstance for WindowWidgetInstance {
     }
 
     fn size(&self) -> [f32; 2] {
-        self.window
-            .inner_size()
-            .map(|size| [size[0] as f32, size[1] as f32])
-            .unwrap_or([0.0, 0.0])
+        let s = self.window.inner_size();
+        [s[0] as f32, s[1] as f32]
     }
 
     fn device_input(&mut self, event: &DeviceEvent, ctx: &UiContext) -> WidgetInteractionResult {
+        let s = self.window.inner_size();
         let window_ctx = WindowCtx {
             dpi: self.window.dpi(),
             format: self.window.format(),
             config: self.window.config().clone(),
-            inner_size: self
-                .window
-                .inner_size()
-                .map(|s| [s[0] as f32, s[1] as f32])
-                .unwrap_or([0.0, 0.0]),
+            inner_size: [s[0] as f32, s[1] as f32],
         };
         let ctx = UiContext {
             event_loop: ctx.event_loop,
@@ -192,15 +184,12 @@ impl AnyWindowWidgetInstance for WindowWidgetInstance {
     }
 
     fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode {
+        let s = self.window.inner_size();
         let window_ctx = WindowCtx {
             dpi: self.window.dpi(),
             format: self.window.format(),
             config: self.window.config().clone(),
-            inner_size: self
-                .window
-                .inner_size()
-                .map(|s| [s[0] as f32, s[1] as f32])
-                .unwrap_or([0.0, 0.0]),
+            inner_size: [s[0] as f32, s[1] as f32],
         };
         let ctx = UiContext {
             event_loop: ctx.event_loop,
@@ -211,15 +200,12 @@ impl AnyWindowWidgetInstance for WindowWidgetInstance {
     }
 
     fn measure(&self, constraints: &metrics::Constraints, ctx: &UiContext) -> [f32; 2] {
+        let s = self.window.inner_size();
         let window_ctx = WindowCtx {
             dpi: self.window.dpi(),
             format: self.window.format(),
             config: self.window.config().clone(),
-            inner_size: self
-                .window
-                .inner_size()
-                .map(|s| [s[0] as f32, s[1] as f32])
-                .unwrap_or([0.0, 0.0]),
+            inner_size: [s[0] as f32, s[1] as f32],
         };
         let ctx = UiContext {
             event_loop: ctx.event_loop,

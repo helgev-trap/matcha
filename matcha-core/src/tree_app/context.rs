@@ -111,8 +111,8 @@ pub(super) struct SharedCtx<'a> {
 /// Stored as `Option<WindowCtx>` inside [`UiContext`]; `None` outside a window pass.
 #[derive(Clone)]
 pub(super) struct WindowCtx {
-    pub(super) dpi: Option<f64>,
-    pub(super) format: Option<wgpu::TextureFormat>,
+    pub(super) dpi: f64,
+    pub(super) format: wgpu::TextureFormat,
     pub(super) config: WindowConfig,
     pub(super) inner_size: [f32; 2],
 }
@@ -158,12 +158,9 @@ impl UiContext<'_> {
         let event_loop = self
             .event_loop
             .expect("create_window called outside of UI pass");
-        Window::new(
-            config,
-            event_loop,
-            self.shared.gpu_instance,
-            &self.shared.gpu_device,
-        )
+        let mut window = Window::new(config, event_loop)?;
+        window.create_surface(self.shared.gpu_instance, &self.shared.gpu_device)?;
+        Ok(window)
     }
 
     pub fn runtime_handle(&self) -> tokio::runtime::Handle {
@@ -183,11 +180,11 @@ impl UiContext<'_> {
     }
 
     pub fn dpi(&self) -> Option<f64> {
-        self.window.and_then(|w| w.dpi)
+        self.window.map(|w| w.dpi)
     }
 
     pub fn surface_format(&self) -> Option<wgpu::TextureFormat> {
-        self.window.and_then(|w| w.format)
+        self.window.map(|w| w.format)
     }
 
     /// Returns the inner size of the current window in physical pixels.

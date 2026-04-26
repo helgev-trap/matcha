@@ -329,8 +329,6 @@ impl<C: Component> Application for TreeApp<C> {
         window_id: WindowId,
         event: DeviceEvent,
     ) {
-        let handle = tokio::runtime::Handle::current();
-
         let op_arc = self
             .window_registry
             .get(&window_id)
