@@ -363,12 +363,8 @@ pub(crate) enum WinitUserMessage<App: Application> {
 // ---------------------------------------------------------------------------
 
 impl EventLoop for winit::event_loop::ActiveEventLoop {
-    fn create_window(
-        &self,
-        config: &WindowConfig,
-    ) -> Result<WindowSurface, WindowError> {
-        WindowSurface::new(self, config)
-            .map_err(|e| WindowError::BackendError(e.to_string()))
+    fn create_window(&self, config: &WindowConfig) -> Result<WindowSurface, WindowError> {
+        WindowSurface::new(self, config).map_err(|e| WindowError::BackendError(e.to_string()))
     }
 
     fn set_control_flow(&self, control_flow: ControlFlow) {

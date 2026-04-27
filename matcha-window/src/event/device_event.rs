@@ -73,43 +73,39 @@ impl DeviceEventState {
     pub fn process(&mut self, event: DeviceEvent) -> Option<DeviceEvent> {
         let input_data = event.relative;
         let updated_data = match input_data {
-            DeviceEventData::MouseInput { event: Some(mouse_input), .. } => {
-                match mouse_input {
-                    MouseInput::Moved { position } => {
-                        self.mouse.cursor_moved(position)
-                    }
-                    MouseInput::Entered => {
-                        self.mouse.cursor_entered()
-                    }
-                    MouseInput::Left => {
-                        self.mouse.cursor_left()
-                    }
-                    MouseInput::ScrollRaw { delta } => {
-                        let pixels = match delta {
-                            crate::event::device_event::mouse_input::ScrollDelta::LineDelta(x, y) => {
-                                [x * self.mouse.pixel_per_line(), y * self.mouse.pixel_per_line()]
-                            }
-                            crate::event::device_event::mouse_input::ScrollDelta::PixelDelta(pos) => pos,
-                        };
-                        self.mouse.mouse_wheel(pixels)
-                    }
-                    MouseInput::ButtonInput { state, button } => {
-                        if let Some(logical) = self.mouse.map_logical_button(button) {
-                            match state {
-                                ElementState::Pressed(_) => {
-                                    self.mouse.button_pressed(logical)?
-                                }
-                                ElementState::Released(_) | ElementState::LongPressed(_) => {
-                                    self.mouse.button_released(logical)?
-                                }
-                            }
-                        } else {
-                            return None;
+            DeviceEventData::MouseInput {
+                event: Some(mouse_input),
+                ..
+            } => match mouse_input {
+                MouseInput::Moved { position } => self.mouse.cursor_moved(position),
+                MouseInput::Entered => self.mouse.cursor_entered(),
+                MouseInput::Left => self.mouse.cursor_left(),
+                MouseInput::ScrollRaw { delta } => {
+                    let pixels = match delta {
+                        crate::event::device_event::mouse_input::ScrollDelta::LineDelta(x, y) => [
+                            x * self.mouse.pixel_per_line(),
+                            y * self.mouse.pixel_per_line(),
+                        ],
+                        crate::event::device_event::mouse_input::ScrollDelta::PixelDelta(pos) => {
+                            pos
                         }
-                    }
-                    _ => return None,
+                    };
+                    self.mouse.mouse_wheel(pixels)
                 }
-            }
+                MouseInput::ButtonInput { state, button } => {
+                    if let Some(logical) = self.mouse.map_logical_button(button) {
+                        match state {
+                            ElementState::Pressed(_) => self.mouse.button_pressed(logical)?,
+                            ElementState::Released(_) | ElementState::LongPressed(_) => {
+                                self.mouse.button_released(logical)?
+                            }
+                        }
+                    } else {
+                        return None;
+                    }
+                }
+                _ => return None,
+            },
             DeviceEventData::Keyboard(mut key_input) => {
                 self.keyboard.keyboard_input(&mut key_input)?
             }
@@ -117,15 +113,9 @@ impl DeviceEventState {
                 self.keyboard.modifiers_changed(modifiers);
                 DeviceEventData::ModifiersChanged(modifiers)
             }
-            DeviceEventData::FileDrop { path_buf } => {
-                DeviceEventData::FileDrop { path_buf }
-            }
-            DeviceEventData::FileHover { path_buf } => {
-                DeviceEventData::FileHover { path_buf }
-            }
-            DeviceEventData::FileHoverCancelled => {
-                DeviceEventData::FileHoverCancelled
-            }
+            DeviceEventData::FileDrop { path_buf } => DeviceEventData::FileDrop { path_buf },
+            DeviceEventData::FileHover { path_buf } => DeviceEventData::FileHover { path_buf },
+            DeviceEventData::FileHoverCancelled => DeviceEventData::FileHoverCancelled,
             _ => return None,
         };
 

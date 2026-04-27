@@ -101,7 +101,10 @@ impl MouseState {
         self.primary_button = primary_button;
     }
 
-    pub fn map_logical_button(&self, button: super::mouse_input::PhysicalMouseButton) -> Option<MouseLogicalButton> {
+    pub fn map_logical_button(
+        &self,
+        button: super::mouse_input::PhysicalMouseButton,
+    ) -> Option<MouseLogicalButton> {
         use super::mouse_input::PhysicalMouseButton as W;
         match button {
             W::Left => Some(match self.primary_button {

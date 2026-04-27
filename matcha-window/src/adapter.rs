@@ -335,10 +335,7 @@ impl<App: Application> Adapter<App> {
 pub trait EventLoop {
     /// Creates the native window only. The wgpu surface is not yet attached.
     /// Call [`Window::create_surface`](crate::window::Window::create_surface) separately.
-    fn create_window(
-        &self,
-        config: &WindowConfig,
-    ) -> Result<WindowSurface, WindowError>;
+    fn create_window(&self, config: &WindowConfig) -> Result<WindowSurface, WindowError>;
 
     // Todo: fn create_custom_cursor(&self) -> CustomCursor;
     // Todo: fn available_monitors(&self) -> impl Iterator<Item = MonitorHandle>;

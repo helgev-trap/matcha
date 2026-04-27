@@ -18,10 +18,7 @@ pub struct Window {
 impl Window {
     /// Creates the native window. The wgpu surface is not attached yet.
     /// Call [`create_surface`](Self::create_surface) before rendering.
-    pub fn new(
-        config: &WindowConfig,
-        ctrl: &dyn EventLoop,
-    ) -> Result<Self, WindowError> {
+    pub fn new(config: &WindowConfig, ctrl: &dyn EventLoop) -> Result<Self, WindowError> {
         let window_surface = ctrl.create_window(config)?;
         Ok(Self {
             config: config.clone(),

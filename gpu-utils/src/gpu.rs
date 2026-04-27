@@ -168,13 +168,12 @@ impl Gpu {
     pub fn recover(&self) -> Result<(wgpu::Device, wgpu::Queue), GpuError> {
         debug!("Gpu::recover: requesting new device");
         let mut device_queue = self.device_queue.write();
-        let (device, queue) =
-            futures::executor::block_on(Self::request_device(
-                &self.adapter,
-                self.features,
-                &self.limits,
-            ))
-            .map_err(GpuError::RecoveryFailed)?;
+        let (device, queue) = futures::executor::block_on(Self::request_device(
+            &self.adapter,
+            self.features,
+            &self.limits,
+        ))
+        .map_err(GpuError::RecoveryFailed)?;
         *device_queue = (device.clone(), queue.clone());
         debug!("Gpu::recover: done");
         Ok((device, queue))

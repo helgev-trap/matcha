@@ -1,13 +1,14 @@
 [workspace]
 members = [
     "matcha",
-    "matcha-core",
-    "matcha-widgets",
+    "matcha-tree",
+    "matcha-tree-widgets",
     "renderer",
     "text-render",
     "utils",
     "gpu-utils",
-    "shared-buffer", "matcha-window",
+    "shared-buffer",
+    "matcha-window",
 ]
 resolver = "3"
 
@@ -17,9 +18,9 @@ version = "0.0.5"
 [workspace.dependencies]
 # self
 matcha = { path = "matcha" }
-matcha-core = { path = "matcha-core" }
+matcha-tree = { path = "matcha-tree" }
 matcha-window = { path = "matcha-window" }
-matcha-widgets = { path = "matcha-widgets" }
+matcha-tree-widgets = { path = "matcha-tree-widgets" }
 shared-buffer = { path = "shared-buffer" }
 renderer = { path = "renderer" }
 text-render = { path = "text-render" }
@@ -59,7 +60,7 @@ nalgebra = { version = "0.34", features = ["bytemuck"] }
 image = "0.25"
 
 # font
-suzuri =  { version = "0.2.1", features = ["wgpu"] }
+suzuri = { version = "0.2.1", features = ["wgpu"] }
 
 # other
 rand = "0.9"

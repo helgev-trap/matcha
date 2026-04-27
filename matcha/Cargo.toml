@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 # self
-matcha-core = { workspace = true }
-matcha-widgets = { workspace = true }
+matcha-tree = { workspace = true }
+matcha-tree-widgets = { workspace = true }
 gpu-utils = { workspace = true }
 shared-buffer = { workspace = true }
 
