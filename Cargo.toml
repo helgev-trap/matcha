@@ -9,6 +9,7 @@ members = [
     "gpu-utils",
     "shared-buffer",
     "matcha-window",
+    "matcha-ecs",
 ]
 resolver = "3"
 
