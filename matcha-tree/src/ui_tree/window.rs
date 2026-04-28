@@ -9,7 +9,7 @@ use crate::ui_tree::{
     widget::{View, Widget, WidgetInteractionResult, WidgetPod, WidgetUpdateError},
 };
 use matcha_window::event::device_event::DeviceEvent;
-use matcha_window::window::{Window as OsWindow, WindowConfig, WindowId};
+use matcha_window::window::{Window as OsWindow, WindowConfig, WindowError, WindowId};
 
 // ------
 // Window
@@ -152,6 +152,8 @@ pub trait AnyWindowWidgetInstance: Send + Sync {
     fn device_input(&mut self, event: &DeviceEvent, ctx: &UiContext) -> WidgetInteractionResult;
     fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode;
     fn measure(&self, constraints: &metrics::Constraints, ctx: &UiContext) -> [f32; 2];
+    fn create_surface(&mut self, instance: &wgpu::Instance, device: &wgpu::Device) -> Result<(), WindowError>;
+    fn destroy_surface(&mut self);
 }
 
 impl AnyWindowWidgetInstance for WindowWidgetInstance {
@@ -211,5 +213,13 @@ impl AnyWindowWidgetInstance for WindowWidgetInstance {
             window: Some(&window_ctx),
         };
         self.widget.measure(constraints, &ctx)
+    }
+
+    fn create_surface(&mut self, instance: &wgpu::Instance, device: &wgpu::Device) -> Result<(), WindowError> {
+        self.window.create_surface(instance, device)
+    }
+
+    fn destroy_surface(&mut self) {
+        self.window.destroy_surface();
     }
 }

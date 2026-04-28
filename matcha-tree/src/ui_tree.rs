@@ -7,7 +7,7 @@ pub mod window;
 
 use dashmap::DashMap;
 use parking_lot::Mutex;
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc, OnceLock, Weak};
 
 use matcha_window::adapter::{EventLoop, EventLoopProxy};
 use matcha_window::application::Application;
@@ -66,6 +66,9 @@ pub struct UiTree<C: Component> {
 
     /// Shared texture atlas for widget rendering (format: Rgba8UnormSrgb).
     texture_atlas: std::sync::Arc<TextureAtlas>,
+
+    /// Flag tracking whether surface creation is currently permitted
+    surface_creation_permitted: AtomicBool,
 }
 
 // ----------------------------------------------------------------------------
@@ -97,6 +100,7 @@ impl<C: Component> UiTree<C> {
             event_receiver: Mutex::new(Some(EventReceiver::new(rx))),
             bridge_handle: OnceLock::new(),
             texture_atlas,
+            surface_creation_permitted: AtomicBool::new(false),
         }
     }
 
@@ -133,6 +137,7 @@ impl<C: Component> UiTree<C> {
             gpu_device,
             gpu_queue,
             texture_atlas: self.texture_atlas.as_ref(),
+            surface_creation_permitted: self.surface_creation_permitted.load(Ordering::SeqCst),
         };
         let ctx = UiContext {
             shared: &shared,
@@ -228,6 +233,18 @@ impl<C: Component> Application for UiTree<C> {
     ///
     /// Called by [`Adapter`](crate::adapter::Adapter) immediately after `resumed`.
     fn create_surface(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
+        self.surface_creation_permitted.store(true, Ordering::SeqCst);
+
+        let gpu_instance = self.gpu.instance();
+        let (gpu_device, _) = self.gpu.context().unwrap();
+
+        for entry in self.window_registry.iter() {
+            if let Some(arc) = entry.value().upgrade() {
+                let mut instance = arc.lock();
+                let _ = instance.create_surface(gpu_instance, &gpu_device);
+            }
+        }
+
         self.run_update(runtime, event_loop, &self.gpu);
     }
 
@@ -236,7 +253,14 @@ impl<C: Component> Application for UiTree<C> {
     /// Dead `Weak` entries in the window registry are pruned on the next
     /// `create_window` / `buffer_updated` call.
     fn destroy_surface(&self, _runtime: &tokio::runtime::Handle, _event_loop: &impl EventLoop) {
-        *self.widget_pod.lock() = None;
+        self.surface_creation_permitted.store(false, Ordering::SeqCst);
+
+        for entry in self.window_registry.iter() {
+            if let Some(arc) = entry.value().upgrade() {
+                let mut instance = arc.lock();
+                instance.destroy_surface();
+            }
+        }
     }
 
     fn suspended(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
@@ -283,6 +307,7 @@ impl<C: Component> Application for UiTree<C> {
                 gpu_device,
                 gpu_queue,
                 texture_atlas: self.texture_atlas.as_ref(),
+                surface_creation_permitted: self.surface_creation_permitted.load(Ordering::SeqCst),
             };
             let ctx = UiContext {
                 shared: &shared,
@@ -346,6 +371,7 @@ impl<C: Component> Application for UiTree<C> {
                 gpu_device,
                 gpu_queue,
                 texture_atlas: self.texture_atlas.as_ref(),
+                surface_creation_permitted: self.surface_creation_permitted.load(Ordering::SeqCst),
             };
             let ctx = UiContext {
                 shared: &shared,
@@ -394,6 +420,7 @@ impl<C: Component> Application for UiTree<C> {
                     gpu_device,
                     gpu_queue,
                     texture_atlas: self.texture_atlas.as_ref(),
+                    surface_creation_permitted: self.surface_creation_permitted.load(Ordering::SeqCst),
                 };
                 let ctx = UiContext {
                     shared: &shared,
