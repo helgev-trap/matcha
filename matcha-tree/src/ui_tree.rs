@@ -7,7 +7,10 @@ pub mod window;
 
 use dashmap::DashMap;
 use parking_lot::Mutex;
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{
+    Arc, OnceLock, Weak,
+    atomic::{AtomicBool, Ordering},
+};
 
 use matcha_window::adapter::{EventLoop, EventLoopProxy};
 use matcha_window::application::Application;
@@ -66,6 +69,15 @@ pub struct UiTree<C: Component> {
 
     /// Shared texture atlas for widget rendering (format: Rgba8UnormSrgb).
     texture_atlas: std::sync::Arc<TextureAtlas>,
+
+    /// Renderer pipeline for rendering instances to the surface.
+    core_renderer: renderer::CoreRenderer,
+
+    /// Texture atlas for stencils (format: R8Unorm).
+    stencil_atlas: std::sync::Arc<TextureAtlas>,
+
+    /// Flag tracking whether surface creation is currently permitted
+    surface_creation_permitted: AtomicBool,
 }
 
 // ----------------------------------------------------------------------------
@@ -88,6 +100,18 @@ impl<C: Component> UiTree<C> {
             TextureAtlas::DEFAULT_MARGIN_PX,
         );
 
+        let stencil_atlas = TextureAtlas::new(
+            &gpu_device,
+            wgpu::Extent3d {
+                width: 4096,
+                height: 4096,
+                depth_or_array_layers: 4,
+            },
+            wgpu::TextureFormat::R8Unorm,
+            TextureAtlas::DEFAULT_MARGIN_PX,
+        );
+        let core_renderer = renderer::CoreRenderer::new(&gpu_device);
+
         Self {
             gpu,
             root: ComponentPod::new(None, root),
@@ -97,6 +121,9 @@ impl<C: Component> UiTree<C> {
             event_receiver: Mutex::new(Some(EventReceiver::new(rx))),
             bridge_handle: OnceLock::new(),
             texture_atlas,
+            core_renderer,
+            stencil_atlas,
+            surface_creation_permitted: AtomicBool::new(false),
         }
     }
 
@@ -133,6 +160,7 @@ impl<C: Component> UiTree<C> {
             gpu_device,
             gpu_queue,
             texture_atlas: self.texture_atlas.as_ref(),
+            surface_creation_permitted: self.surface_creation_permitted.load(Ordering::SeqCst),
         };
         let ctx = UiContext {
             shared: &shared,
@@ -185,12 +213,20 @@ impl<C: Component> Application for UiTree<C> {
             .take()
             .expect("TreeApp::init called more than once");
 
-        let buffer_ctx = BufferContext::global().clone();
+        // Subscribe before spawning so we don't miss signals that fire between
+        // `init` returning and the bridge task first awaiting `changed()`.
+        let mut buffer_rx = BufferContext::global().subscribe();
 
         let handle = runtime.spawn(async move {
             loop {
                 tokio::select! {
-                    _ = buffer_ctx.notified() => {
+                    // `changed()` coalesces: multiple send_replace() calls between
+                    // two polls collapse into one wakeup.  No permits are stored, so
+                    // a slow event loop cannot cause buffered BufferUpdated to pile up.
+                    result = buffer_rx.changed() => {
+                        if result.is_err() {
+                            break; // sender dropped — shouldn't happen in normal use
+                        }
                         proxy.send_command(TreeAppCommand::BufferUpdated);
                     }
                     msg = receiver.recv() => match msg {
@@ -228,6 +264,19 @@ impl<C: Component> Application for UiTree<C> {
     ///
     /// Called by [`Adapter`](crate::adapter::Adapter) immediately after `resumed`.
     fn create_surface(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
+        self.surface_creation_permitted
+            .store(true, Ordering::SeqCst);
+
+        let gpu_instance = self.gpu.instance();
+        let (gpu_device, _) = self.gpu.context().unwrap();
+
+        for entry in self.window_registry.iter() {
+            if let Some(arc) = entry.value().upgrade() {
+                let mut instance = arc.lock();
+                let _ = instance.create_surface(gpu_instance, &gpu_device);
+            }
+        }
+
         self.run_update(runtime, event_loop, &self.gpu);
     }
 
@@ -236,7 +285,15 @@ impl<C: Component> Application for UiTree<C> {
     /// Dead `Weak` entries in the window registry are pruned on the next
     /// `create_window` / `buffer_updated` call.
     fn destroy_surface(&self, _runtime: &tokio::runtime::Handle, _event_loop: &impl EventLoop) {
-        *self.widget_pod.lock() = None;
+        self.surface_creation_permitted
+            .store(false, Ordering::SeqCst);
+
+        for entry in self.window_registry.iter() {
+            if let Some(arc) = entry.value().upgrade() {
+                let mut instance = arc.lock();
+                instance.destroy_surface();
+            }
+        }
     }
 
     fn suspended(&self, runtime: &tokio::runtime::Handle, event_loop: &impl EventLoop) {
@@ -264,7 +321,7 @@ impl<C: Component> Application for UiTree<C> {
     /// Renders a single window by walking its widget tree and collecting a
     /// [`RenderNode`](renderer::RenderNode).
     ///
-    /// GPU surface submission is not yet implemented (see TODO below).
+    /// GPU surface submission is now implemented.
     async fn render(&self, runtime: &tokio::runtime::Handle, window_id: WindowId) {
         let op_arc = self
             .window_registry
@@ -283,6 +340,7 @@ impl<C: Component> Application for UiTree<C> {
                 gpu_device,
                 gpu_queue,
                 texture_atlas: self.texture_atlas.as_ref(),
+                surface_creation_permitted: self.surface_creation_permitted.load(Ordering::SeqCst),
             };
             let ctx = UiContext {
                 shared: &shared,
@@ -291,11 +349,12 @@ impl<C: Component> Application for UiTree<C> {
             };
 
             let mut instance = arc.lock();
-            let size = instance.size();
-            let _render_node = instance.render(size, &ctx);
-            // TODO: submit _render_node to the window's wgpu surface.
-            // Requires extracting the surface from `WindowWidgetInstance` and
-            // running the renderer pipeline via `self.gpu`.
+            instance.render(
+                &self.core_renderer,
+                &self.texture_atlas.texture(),
+                &self.stencil_atlas.texture(),
+                &ctx,
+            );
         }
     }
 
@@ -310,6 +369,7 @@ impl<C: Component> Application for UiTree<C> {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        // TODO
     }
 
     fn window_destroyed(
@@ -346,6 +406,7 @@ impl<C: Component> Application for UiTree<C> {
                 gpu_device,
                 gpu_queue,
                 texture_atlas: self.texture_atlas.as_ref(),
+                surface_creation_permitted: self.surface_creation_permitted.load(Ordering::SeqCst),
             };
             let ctx = UiContext {
                 shared: &shared,
@@ -394,6 +455,9 @@ impl<C: Component> Application for UiTree<C> {
                     gpu_device,
                     gpu_queue,
                     texture_atlas: self.texture_atlas.as_ref(),
+                    surface_creation_permitted: self
+                        .surface_creation_permitted
+                        .load(Ordering::SeqCst),
                 };
                 let ctx = UiContext {
                     shared: &shared,

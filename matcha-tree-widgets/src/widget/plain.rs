@@ -83,11 +83,16 @@ impl Widget for PlainWidget {
 
     fn update(&mut self, view: &Plain, ctx: &UiContext) -> WidgetInteractionResult {
         let size_changed = self.size != view.size;
+        // Style is a dyn trait so we cannot do value equality; treat any non-empty
+        // style as potentially changed (new Arc is created every frame in view()).
+        let style_changed = !view.style.is_empty();
         self.style = view.style.clone();
         self.size = view.size.clone();
         let child_changed = reconcile_single_child(&mut self.child, view.content.as_deref(), ctx);
         if size_changed || child_changed {
             WidgetInteractionResult::LayoutNeeded
+        } else if style_changed {
+            WidgetInteractionResult::RedrawNeeded
         } else {
             WidgetInteractionResult::NoChange
         }

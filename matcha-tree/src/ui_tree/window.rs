@@ -9,7 +9,7 @@ use crate::ui_tree::{
     widget::{View, Widget, WidgetInteractionResult, WidgetPod, WidgetUpdateError},
 };
 use matcha_window::event::device_event::DeviceEvent;
-use matcha_window::window::{Window as OsWindow, WindowConfig, WindowId};
+use matcha_window::window::{Window as OsWindow, WindowConfig, WindowError, WindowId};
 
 // ------
 // Window
@@ -126,9 +126,18 @@ impl WindowWidgetInstance {
             window: Some(&window_ctx),
         };
         match self.widget.try_update(view.view.as_ref(), &ctx) {
-            Ok(result) => result,
+            Ok(result) => {
+                if matches!(
+                    result,
+                    WidgetInteractionResult::LayoutNeeded | WidgetInteractionResult::RedrawNeeded
+                ) {
+                    self.window.request_redraw();
+                }
+                result
+            }
             Err(WidgetUpdateError::TypeMismatch) => {
                 self.widget = view.view.build(&ctx);
+                self.window.request_redraw();
                 WidgetInteractionResult::LayoutNeeded
             }
         }
@@ -150,8 +159,20 @@ pub trait AnyWindowWidgetInstance: Send + Sync {
     fn window_id(&self) -> WindowId;
     fn size(&self) -> [f32; 2];
     fn device_input(&mut self, event: &DeviceEvent, ctx: &UiContext) -> WidgetInteractionResult;
-    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode;
+    fn render(
+        &mut self,
+        renderer: &renderer::CoreRenderer,
+        texture_atlas: &wgpu::Texture,
+        stencil_atlas: &wgpu::Texture,
+        ctx: &UiContext,
+    );
     fn measure(&self, constraints: &metrics::Constraints, ctx: &UiContext) -> [f32; 2];
+    fn create_surface(
+        &mut self,
+        instance: &wgpu::Instance,
+        device: &wgpu::Device,
+    ) -> Result<(), WindowError>;
+    fn destroy_surface(&mut self);
 }
 
 impl AnyWindowWidgetInstance for WindowWidgetInstance {
@@ -178,10 +199,24 @@ impl AnyWindowWidgetInstance for WindowWidgetInstance {
             window: Some(&window_ctx),
         };
         let bounds = self.size();
-        self.widget.device_input(bounds, event, &ctx)
+        let result = self.widget.device_input(bounds, event, &ctx);
+        if matches!(
+            result,
+            WidgetInteractionResult::LayoutNeeded | WidgetInteractionResult::RedrawNeeded
+        ) {
+            self.window.request_redraw();
+        }
+        result
     }
 
-    fn render(&mut self, bounds: [f32; 2], ctx: &UiContext) -> RenderNode {
+    fn render(
+        &mut self,
+        renderer: &renderer::CoreRenderer,
+        texture_atlas: &wgpu::Texture,
+        stencil_atlas: &wgpu::Texture,
+        ctx: &UiContext,
+    ) {
+        let size = self.size();
         let s = self.window.inner_size();
         let window_ctx = WindowCtx {
             dpi: self.window.dpi(),
@@ -189,12 +224,39 @@ impl AnyWindowWidgetInstance for WindowWidgetInstance {
             config: self.window.config().clone(),
             inner_size: [s[0] as f32, s[1] as f32],
         };
-        let ctx = UiContext {
+        let widget_ctx = UiContext {
             event_loop: ctx.event_loop,
             shared: ctx.shared,
             window: Some(&window_ctx),
         };
-        self.widget.render(bounds, &ctx)
+        let render_node = self.widget.render(size, &widget_ctx);
+
+        let format = self.window.format();
+
+        let device = &ctx.shared.gpu_device;
+        let queue = &ctx.shared.gpu_queue;
+
+        let _ = self
+            .window
+            .surface()
+            .rendering_with_surface_texture(device, |view, _texture| {
+                let _ = renderer.render(
+                    device,
+                    queue,
+                    format,
+                    view,
+                    size,
+                    &render_node,
+                    wgpu::Color {
+                        r: 0.1,
+                        g: 0.1,
+                        b: 0.1,
+                        a: 1.0,
+                    },
+                    texture_atlas,
+                    stencil_atlas,
+                );
+            });
     }
 
     fn measure(&self, constraints: &metrics::Constraints, ctx: &UiContext) -> [f32; 2] {
@@ -211,5 +273,17 @@ impl AnyWindowWidgetInstance for WindowWidgetInstance {
             window: Some(&window_ctx),
         };
         self.widget.measure(constraints, &ctx)
+    }
+
+    fn create_surface(
+        &mut self,
+        instance: &wgpu::Instance,
+        device: &wgpu::Device,
+    ) -> Result<(), WindowError> {
+        self.window.create_surface(instance, device)
+    }
+
+    fn destroy_surface(&mut self) {
+        self.window.destroy_surface();
     }
 }

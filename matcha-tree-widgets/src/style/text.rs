@@ -185,6 +185,20 @@ impl TextRenderer {
     pub fn set_layout_config(&mut self, config: suzuri::text::TextLayoutConfig) {
         self.layout_config = config;
     }
+
+    /// Updates text spans from another `TextRenderer`, **preserving the initialized
+    /// `FontSystem`** (`text_shared`) so system-font loading is not repeated on
+    /// every frame.  Derived caches (`text_data`, `layout_cache`, `texture_cache`)
+    /// are invalidated because the content changed.
+    pub fn set_spans_from(&mut self, other: &TextRenderer) {
+        self.owned_texts = other.owned_texts.clone();
+        self.layout_config = other.layout_config.clone();
+        // Invalidate content-derived caches.
+        self.text_data = RwOption::new();
+        self.layout_cache = RwCache::new();
+        self.texture_cache = RwCache::new();
+        // `text_shared` (FontSystem) and `texture_copy` are kept as-is.
+    }
 }
 
 impl TextRenderer {

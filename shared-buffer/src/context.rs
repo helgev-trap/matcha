@@ -1,26 +1,19 @@
 use std::sync::{Arc, LazyLock};
 
+use tokio::sync::watch;
+
 // ---------------------------------------------------------------------------
 // BufferContext
 // ---------------------------------------------------------------------------
 
 /// Shared notification context for all [`SharedValue`](super::SharedValue) instances.
 ///
-/// All buffers created from the same context share a single notifier, so any
-/// write to any buffer triggers the same event-loop wakeup signal.
-///
-/// # Global context
-///
-/// The global instance is lazily initialized on first access via [`BufferContext::global()`].
-/// No explicit initialization call is required.
-///
-/// # Custom context
-///
-/// To isolate a group of buffers into a separate notification channel, create
-/// a custom instance with [`BufferContext::new()`] and pass it to
-/// [`SharedValue::new_in()`](super::SharedValue::new_in).
+/// Uses a `watch` channel internally so that multiple rapid `signal()` calls
+/// between two `subscribe()` polls coalesce into a single notification.
+/// This prevents queued `BufferUpdated` commands from piling up when the event
+/// loop is busy rendering.
 pub struct BufferContext {
-    notify: tokio::sync::Notify,
+    tx: watch::Sender<()>,
 }
 
 static GLOBAL: LazyLock<Arc<BufferContext>> = LazyLock::new(BufferContext::new);
@@ -30,9 +23,8 @@ impl BufferContext {
     ///
     /// For the common case, prefer [`global()`](Self::global).
     pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            notify: tokio::sync::Notify::new(),
-        })
+        let (tx, _) = watch::channel(());
+        Arc::new(Self { tx })
     }
 
     /// Returns a reference to the global context.
@@ -46,17 +38,19 @@ impl BufferContext {
 impl BufferContext {
     /// Sends a wakeup signal. Non-blocking, callable from any thread.
     ///
-    /// If a signal is already pending (no one has called `notified()` yet),
-    /// it is coalesced — at most one wakeup is queued at a time.
+    /// Multiple calls between two `subscribe` polls coalesce — only one
+    /// wakeup is delivered per polling interval.
     pub(crate) fn signal(&self) {
-        self.notify.notify_one();
+        // send_replace always notifies receivers even when the value is the
+        // same type (), so every signal is guaranteed to be delivered.
+        self.tx.send_replace(());
     }
 
-    /// Waits asynchronously until a signal is received.
+    /// Returns a new [`watch::Receiver`] for this context.
     ///
-    /// The bridge task calls this in a `select!` loop to forward signals to
-    /// the event loop.
-    pub async fn notified(&self) {
-        self.notify.notified().await
+    /// The receiver starts with the current value marked as "seen"; only
+    /// future `signal()` calls will trigger [`watch::Receiver::changed`].
+    pub fn subscribe(&self) -> watch::Receiver<()> {
+        self.tx.subscribe()
     }
 }

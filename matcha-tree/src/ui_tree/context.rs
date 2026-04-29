@@ -101,6 +101,7 @@ pub(super) struct SharedCtx<'a> {
     pub(super) gpu_device: wgpu::Device,
     pub(super) gpu_queue: wgpu::Queue,
     pub(super) texture_atlas: &'a TextureAtlas,
+    pub(super) surface_creation_permitted: bool,
 }
 
 // ----------------------------------------------------------------------------
@@ -160,7 +161,9 @@ impl UiContext<'_> {
             .event_loop
             .expect("create_window called outside of UI pass");
         let mut window = Window::new(config, event_loop)?;
-        window.create_surface(self.shared.gpu_instance, &self.shared.gpu_device)?;
+        if self.shared.surface_creation_permitted {
+            window.create_surface(self.shared.gpu_instance, &self.shared.gpu_device)?;
+        }
         Ok(window)
     }
 
