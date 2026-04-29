@@ -21,7 +21,7 @@ impl Default for GpuDescriptor {
         Self {
             backends: wgpu::Backends::PRIMARY,
             power_preference: wgpu::PowerPreference::LowPower,
-            required_features: wgpu::Features::PUSH_CONSTANTS,
+            required_features: wgpu::Features::PUSH_CONSTANTS | wgpu::Features::VERTEX_WRITABLE_STORAGE,
             required_limits: None,
             preferred_surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
         }
