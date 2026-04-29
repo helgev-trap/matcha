@@ -171,7 +171,14 @@ impl WidgetPod {
         view: &dyn View,
         ctx: &UiContext,
     ) -> Result<WidgetInteractionResult, WidgetUpdateError> {
-        self.widget.try_update(view, ctx)
+        let result = self.widget.try_update(view, ctx)?;
+        match result {
+            WidgetInteractionResult::LayoutNeeded | WidgetInteractionResult::RedrawNeeded => {
+                self.invalidate_render_cache();
+            }
+            WidgetInteractionResult::NoChange => {}
+        }
+        Ok(result)
     }
 
     pub fn device_input(

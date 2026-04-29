@@ -67,7 +67,10 @@ impl Widget for TextWidget {
 
     fn update(&mut self, view: &Text, _ctx: &UiContext) -> WidgetInteractionResult {
         if self.text != view.text {
-            self.text = view.text.clone();
+            // Update spans in-place so the initialized FontSystem (text_shared)
+            // is reused across frames.  A full clone would drop and re-create the
+            // FontSystem every frame, causing system-font reloading each time.
+            self.text.set_spans_from(&view.text);
             WidgetInteractionResult::LayoutNeeded
         } else {
             WidgetInteractionResult::NoChange

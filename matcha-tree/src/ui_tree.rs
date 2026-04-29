@@ -213,12 +213,20 @@ impl<C: Component> Application for UiTree<C> {
             .take()
             .expect("TreeApp::init called more than once");
 
-        let buffer_ctx = BufferContext::global().clone();
+        // Subscribe before spawning so we don't miss signals that fire between
+        // `init` returning and the bridge task first awaiting `changed()`.
+        let mut buffer_rx = BufferContext::global().subscribe();
 
         let handle = runtime.spawn(async move {
             loop {
                 tokio::select! {
-                    _ = buffer_ctx.notified() => {
+                    // `changed()` coalesces: multiple send_replace() calls between
+                    // two polls collapse into one wakeup.  No permits are stored, so
+                    // a slow event loop cannot cause buffered BufferUpdated to pile up.
+                    result = buffer_rx.changed() => {
+                        if result.is_err() {
+                            break; // sender dropped — shouldn't happen in normal use
+                        }
                         proxy.send_command(TreeAppCommand::BufferUpdated);
                     }
                     msg = receiver.recv() => match msg {
