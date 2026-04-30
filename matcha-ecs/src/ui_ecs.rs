@@ -11,6 +11,7 @@ use matcha_window::{
 
 pub struct UiEcs {}
 
+#[async_trait::async_trait]
 impl Application for UiEcs {
     type Command = ();
 
@@ -43,24 +44,7 @@ impl Application for UiEcs {
         todo!()
     }
 
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn render<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        runtime: &'life1 tokio::runtime::Handle,
-        window_id: WindowId,
-    ) -> ::core::pin::Pin<
-        Box<dyn ::core::future::Future<Output = ()> + ::core::marker::Send + 'async_trait>,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait,
-    {
+    async fn render(&self, runtime: &tokio::runtime::Handle, window_id: WindowId) {
         todo!()
     }
 
