@@ -12,8 +12,6 @@ A Rust GUI crate with a Vue-like Elm architecture, designed for frame-by-frame c
 
 🚧🚧🚧 **This crate/readme is under development.** 🚧🚧🚧
 
-Development is underway with the goal of having a minimally functional version ready by around April 2025.
-
 ### Work in Progress
 
 #### Increase/Decrease Example
